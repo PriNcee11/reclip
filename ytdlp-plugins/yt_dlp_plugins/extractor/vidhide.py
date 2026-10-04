@@ -6,7 +6,7 @@ yt-dlp has no extractor for them, so pages that iframe one fail with "Unsupporte
 With this plugin yt-dlp's generic extractor finds the iframe and this extractor returns
 the HLS formats.
 
-Add new mirrors to _DOMAINS (only playrecord.biz is tested against a live page).
+Add new mirrors to _DOMAINS (tested against live pages: playrecord.biz, recordplay.biz).
 
 Their HLS segments are disguised as images: a tiny PNG glued in front of the real
 MPEG-TS. yt-dlp would concatenate PNG+TS+PNG+TS... into an unplayable file, so this
@@ -21,7 +21,7 @@ from yt_dlp.downloader.fragment import FragmentFD
 from yt_dlp.extractor.common import InfoExtractor
 from yt_dlp.utils import ExtractorError, decode_packed_codes, float_or_none, urljoin
 
-_DOMAINS = r"(?:playrecord\.biz|vidhide(?:pro|vip|plus|hub)?\.com)"
+_DOMAINS = r"(?:playrecord\.biz|recordplay\.biz|vidhide(?:pro|vip|plus|hub)?\.com)"
 _PATH = r"/(?:embed|e|v)/(?P<id>[0-9a-z]{12})"
 
 # Order the player itself uses: links.hls4 || links.hls3 || links.hls2
