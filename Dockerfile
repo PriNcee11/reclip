@@ -21,6 +21,8 @@ USER reclip
 
 # Put the reclip user's --user installs first so startup yt-dlp updates take effect.
 ENV PATH=/home/reclip/.local/bin:$PATH
+# Our yt-dlp plugins (yt_dlp_plugins namespace), loaded by every yt-dlp run.
+ENV PYTHONPATH=/app/ytdlp-plugins
 
 EXPOSE 8899
 

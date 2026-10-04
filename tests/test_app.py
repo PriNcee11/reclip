@@ -219,6 +219,11 @@ def run_job(url, format_choice="video", format_id=None, title="t"):
     return reclip.jobs["j1"]
 
 
+def test_download_args_keep_chosen_quality_for_formats_with_audio():
+    args = reclip.download_args("u", "o", "video", "hls-2116")
+    assert args[args.index("-f") + 1] == "hls-2116+bestaudio/hls-2116/best"
+
+
 def test_download_fx_format_goes_straight_to_direct_url(client, monkeypatch, fx):
     fx.tweet = tweet(video())
     calls = fake_ytdlp(monkeypatch, writes_file("mp4"))

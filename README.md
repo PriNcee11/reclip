@@ -26,6 +26,15 @@ Imagen: `ghcr.io/princee11/reclip:latest` (amd64, la publica CI en cada push a `
   (`yt-dlp[default,curl-cffi,deno]`). Si un sitio responde 403/503, Cloudflare o
   captcha, se reintenta una vez con `--impersonate chrome`
   (`RECLIP_IMPERSONATE`, vacío para no reintentar).
+- **Embeds VidHide (plugin de yt-dlp).** `ytdlp-plugins/` lleva un extractor para
+  reproductores tipo VidHide (`playrecord.biz` y espejos `vidhide*.com`): páginas que
+  los incrustan en un `<iframe>` pasan de "Unsupported URL" a descargarse con su
+  selector de calidad. Esos hosts disfrazan los trozos HLS de imagen (un PNG pegado
+  delante del MPEG-TS); el plugin parchea el descargador de fragmentos de yt-dlp para
+  quitar ese PNG (solo si el fragmento empieza por PNG y detrás hay MPEG-TS). Se carga
+  vía `PYTHONPATH=/app/ytdlp-plugins`. Espejos nuevos: añadirlos a `_DOMAINS`.
+- **Calidad elegida respetada** también en formatos que ya traen audio (HLS):
+  `-f ID+bestaudio/ID/best` en vez de `ID+bestaudio/best`, que caía en "la mejor".
 - **Errores en el log:** cada fallo queda en `docker logs` con la URL y la línea
   `ERROR:` de yt-dlp.
 - Tests (`pytest`) y `ruff` en CI.

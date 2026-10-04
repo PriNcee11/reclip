@@ -217,7 +217,9 @@ def download_args(url, out_template, format_choice, format_id):
     if format_choice == "audio":
         args += ["-x", "--audio-format", "mp3"]
     elif format_id:
-        args += ["-f", f"{format_id}+bestaudio/best", "--merge-output-format", "mp4"]
+        # Middle option: a format that already has audio (HLS sites) when there is no
+        # separate audio to merge; otherwise "/best" would ignore the chosen quality.
+        args += ["-f", f"{format_id}+bestaudio/{format_id}/best", "--merge-output-format", "mp4"]
     else:
         args += ["-f", "bestvideo+bestaudio/best", "--merge-output-format", "mp4"]
     args.append(url)
