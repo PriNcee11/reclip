@@ -399,6 +399,7 @@
     </div>
 
     <div id="cards" class="cards"></div>
+    <div id="dl-all"></div>
 
     <div class="footer">
       YouTube &middot; TikTok &middot; Instagram &middot; Twitter/X &middot; Reddit &middot; Facebook<br>
@@ -409,7 +410,12 @@
 
   <script>
     let currentFormat = 'video';
+    // Append-only: a card's index never changes, so running downloads keep their card
+    // when more links are fetched.
     let cardData = [];
+    // Download queue: "Download" queues the card; at most MAX_PARALLEL run at once.
+    const MAX_PARALLEL = 2;
+    let queueSeq = 0;
 
     function setFormat(btn) {
       document.querySelectorAll('.pill').forEach(b => b.classList.remove('active'));
@@ -457,15 +463,16 @@
     });
 
     async function go() {
-      const urls = parseUrls(document.getElementById('urls').value);
+      const textarea = document.getElementById('urls');
+      // Links that already have a card (unless it failed) are not fetched again
+      const known = new Set(cardData.filter(c => c.status !== 'info-error').map(c => c.url));
+      const urls = parseUrls(textarea.value).filter(u => !known.has(u));
+      textarea.value = '';
       if (!urls.length) return;
 
       const btn = document.getElementById('goBtn');
-      const container = document.getElementById('cards');
       btn.disabled = true;
       btn.textContent = 'Loading...';
-      container.innerHTML = '';
-      cardData = [];
 
       // Split X posts with several videos into one card per video
       for (let i = 0; i < urls.length; i++) {
@@ -534,9 +541,7 @@
         renderCard(idx);
       }
 
-      if (cardData.filter(c => c.status === 'ready').length > 1) {
-        renderDownloadAll();
-      }
+      renderDownloadAll();
 
       btn.disabled = false;
       btn.textContent = 'Fetch';
@@ -585,7 +590,8 @@
 
       // Ready / downloading / done / error states
       el.className = 'card';
-      const isAudio = currentFormat === 'audio';
+      // Queued/finished cards keep the format they were queued with
+      const isAudio = (c.format || currentFormat) === 'audio';
 
       let thumbHtml;
       if (isAudio) {
@@ -606,6 +612,9 @@
       let actionHtml = '';
       if (c.status === 'ready') {
         actionHtml = `<button class="card-dl-btn" onclick="dlCard(${idx})">Download</button>${qualityChips}`;
+      } else if (c.status === 'queued') {
+        actionHtml = `<button class="card-dl-btn" onclick="unqueueCard(${idx})">Remove</button>
+          <span class="card-status">Queued #${queuePosition(idx)}</span>`;
       } else if (c.status === 'downloading') {
         actionHtml = `<span class="card-status downloading"><span class="spin"></span> Downloading...</span>`;
       } else if (c.status === 'done') {
@@ -627,14 +636,10 @@
     }
 
     function renderDownloadAll() {
-      const existing = document.getElementById('dl-all-bar');
-      if (existing) existing.remove();
-
-      const bar = document.createElement('div');
-      bar.id = 'dl-all-bar';
-      bar.className = 'dl-all-bar';
-      bar.innerHTML = `<button class="dl-all-btn" onclick="dlAll()">Download All</button>`;
-      document.getElementById('cards').appendChild(bar);
+      const ready = cardData.filter(c => c.status === 'ready').length;
+      document.getElementById('dl-all').innerHTML = ready > 1
+        ? `<div class="dl-all-bar"><button class="dl-all-btn" onclick="dlAll()">Download All (${ready})</button></div>`
+        : '';
     }
 
     function pickFormat(idx, formatId) {
@@ -642,10 +647,62 @@
       renderCard(idx);
     }
 
-    async function dlCard(idx) {
+    // --- download queue ---
+
+    function dlCard(idx) {
+      const c = cardData[idx];
+      c.status = 'queued';
+      c.format = currentFormat;
+      c.queuedAt = ++queueSeq;
+      c.error = null;
+      renderCard(idx);
+      renderDownloadAll();
+      pumpQueue();
+    }
+
+    function unqueueCard(idx) {
+      if (cardData[idx].status !== 'queued') return;
+      cardData[idx].status = 'ready';
+      renderCard(idx);
+      renderQueued();
+      renderDownloadAll();
+    }
+
+    function queuedIndexes() {
+      return cardData
+        .map((c, i) => i)
+        .filter(i => cardData[i].status === 'queued')
+        .sort((a, b) => cardData[a].queuedAt - cardData[b].queuedAt);
+    }
+
+    function queuePosition(idx) {
+      return queuedIndexes().indexOf(idx) + 1;
+    }
+
+    function renderQueued() {
+      queuedIndexes().forEach(renderCard);
+    }
+
+    // Start queued downloads while there is a free slot; called whenever one ends.
+    function pumpQueue() {
+      let running = cardData.filter(c => c.status === 'downloading').length;
+      for (const idx of queuedIndexes()) {
+        if (running >= MAX_PARALLEL) break;
+        running++;
+        startDownload(idx);
+      }
+      renderQueued();
+    }
+
+    function finishCard(idx, status, fields) {
+      Object.assign(cardData[idx], { status }, fields);
+      renderCard(idx);
+      pumpQueue();
+    }
+
+    async function startDownload(idx) {
       const c = cardData[idx];
       c.status = 'downloading';
-      c.error = null;
       renderCard(idx);
 
       try {
@@ -654,24 +711,20 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             url: c.url,
-            format: currentFormat,
+            format: c.format,
             format_id: c.selectedFormatId,
             title: c.title || '',
           }),
         });
         const data = await res.json();
         if (data.error) {
-          c.status = 'error';
-          c.error = data.error;
-          renderCard(idx);
+          finishCard(idx, 'error', { error: data.error });
           return;
         }
         c.jobId = data.job_id;
         pollCard(idx);
       } catch (err) {
-        c.status = 'error';
-        c.error = err.message;
-        renderCard(idx);
+        finishCard(idx, 'error', { error: err.message });
       }
     }
 
@@ -683,21 +736,15 @@
           const data = await res.json();
           if (data.status === 'done') {
             clearInterval(iv);
-            c.status = 'done';
-            c.filename = data.filename;
-            renderCard(idx);
+            finishCard(idx, 'done', { filename: data.filename });
             saveCard(idx);
           } else if (data.status === 'error') {
             clearInterval(iv);
-            c.status = 'error';
-            c.error = data.error;
-            renderCard(idx);
+            finishCard(idx, 'error', { error: data.error });
           }
         } catch {
           clearInterval(iv);
-          c.status = 'error';
-          c.error = 'Lost connection to server';
-          renderCard(idx);
+          finishCard(idx, 'error', { error: 'Lost connection to server' });
         }
       }, 1000);
     }
@@ -711,17 +758,8 @@
       a.click();
     }
 
-    async function dlAll() {
-      const btn = document.querySelector('.dl-all-btn');
-      if (btn) { btn.disabled = true; btn.textContent = 'Downloading...'; }
-
-      for (let i = 0; i < cardData.length; i++) {
-        if (cardData[i].status === 'ready') {
-          await dlCard(i);
-        }
-      }
-
-      if (btn) { btn.disabled = false; btn.textContent = 'Download All'; }
+    function dlAll() {
+      cardData.forEach((c, i) => { if (c.status === 'ready') dlCard(i); });
     }
   </script>
 </body>
