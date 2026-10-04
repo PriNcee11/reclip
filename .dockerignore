@@ -13,3 +13,8 @@ Dockerfile
 .env.*
 .vscode
 .idea
+tests
+.github
+pytest.ini
+ruff.toml
+requirements-dev.txt

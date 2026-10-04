@@ -1,2 +1,4 @@
 flask
-yt-dlp
+# default: yt-dlp-ejs and friends; curl-cffi: --impersonate (Cloudflare & co.);
+# deno: JS runtime yt-dlp needs for YouTube and other JS-heavy extractors.
+yt-dlp[default,curl-cffi,deno]

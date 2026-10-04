@@ -1,0 +1,5 @@
+line-length = 120
+
+[lint]
+# Explicit set: newer ruff releases enable far more rules by default.
+select = ["E", "F", "W", "I", "B"]

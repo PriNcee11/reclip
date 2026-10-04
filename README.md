@@ -9,6 +9,27 @@ https://github.com/user-attachments/assets/419d3e50-c933-444b-8cab-a9724986ba05
 
 ![ReClip MP3 Mode](assets/preview-mp3.png)
 
+## Cambios de este fork (PriNcee11)
+
+Fork de [averygan/reclip](https://github.com/averygan/reclip) para el homelab.
+Imagen: `ghcr.io/princee11/reclip:latest` (amd64, la publica CI en cada push a `main`).
+
+- **Plan B para X/Twitter vía [fxtwitter](https://github.com/FixTweet/FxTwitter).**
+  X oculta a los visitantes sin sesión los posts marcados como sensibles y yt-dlp
+  no ve su vídeo. Si yt-dlp falla con un enlace de X, ReClip pide el post a
+  `api.fxtwitter.com` y descarga el MP4 directo de `video.twimg.com`. Sin cuenta ni
+  cookies. Se desactiva con `RECLIP_FXTWITTER=0`; la API se cambia con
+  `RECLIP_FXTWITTER_API`.
+- **Posts con varios vídeos:** al pegar el enlace se separa en una tarjeta por
+  vídeo (`/video/N`, con la misma numeración que X y yt-dlp: las fotos cuentan).
+- **Páginas difíciles:** la imagen trae `curl_cffi` y deno
+  (`yt-dlp[default,curl-cffi,deno]`). Si un sitio responde 403/503, Cloudflare o
+  captcha, se reintenta una vez con `--impersonate chrome`
+  (`RECLIP_IMPERSONATE`, vacío para no reintentar).
+- **Errores en el log:** cada fallo queda en `docker logs` con la URL y la línea
+  `ERROR:` de yt-dlp.
+- Tests (`pytest`) y `ruff` en CI.
+
 ## Features
 
 - Download videos from 1000+ supported sites (via [yt-dlp](https://github.com/yt-dlp/yt-dlp))

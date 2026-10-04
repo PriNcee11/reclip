@@ -421,6 +421,10 @@
       return [...new Set(text.split(/[\s,]+/).map(u => u.trim()).filter(u => u.startsWith('http')))];
     }
 
+    function isTweet(u) {
+      return /^https?:\/\/(www\.|mobile\.)?(twitter|x|fxtwitter|vxtwitter|fixupx|fixvx)\.com\/[^/]+\/status\/\d+/i.test(u);
+    }
+
     function fmtDur(s) {
       if (!s) return '';
       const m = Math.floor(s / 60);
@@ -438,6 +442,7 @@
       if (err.includes('Unsupported URL')) return 'This URL is not supported';
       if (err.includes('Video unavailable')) return 'Video is unavailable or private';
       if (err.includes('Private video')) return 'This video is private';
+      if (err.includes('No video could be found')) return 'This post has no video';
       if (err.includes('HTTP Error 403')) return 'Access denied by the platform';
       if (err.includes('HTTP Error 404')) return 'Video not found';
       if (err.includes('copyright')) return 'Video blocked due to copyright';
@@ -461,6 +466,24 @@
       btn.textContent = 'Loading...';
       container.innerHTML = '';
       cardData = [];
+
+      // Split X posts with several videos into one card per video
+      for (let i = 0; i < urls.length; i++) {
+        if (isTweet(urls[i]) && !/\/(video|photo)\/\d+/.test(urls[i])) {
+          try {
+            const res = await fetch('/api/expand', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: urls[i] }),
+            });
+            const data = await res.json();
+            if (data.urls && data.urls.length > 1) {
+              urls.splice(i, 1, ...data.urls);
+              i += data.urls.length - 1;
+            }
+          } catch {}
+        }
+      }
 
       // Check if youtube playlist URL
       for (let i = 0; i < urls.length; i++) {
