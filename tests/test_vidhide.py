@@ -89,10 +89,12 @@ def test_embed_regex_finds_iframes_any_case():
     html = (f'<IFRAME SRC="{EMBED}" FRAMEBORDER=0></IFRAME>'
             "<iframe src=https://vidhidepro.com/e/zzzzzz999999 ></iframe>"
             '<iframe src="https://recordplay.biz/e/icpg81x5osfz" frameborder="0"></iframe>'
+            '<IFRAME SRC="https://sfastwish.com/e/goindev9r6rc" FRAMEBORDER=0></IFRAME>'
             '<iframe src="https://www.youtube.com/embed/abcdefghijk"></iframe>'
             '<iframe src="https://evil.example/embed/abcdef123456"></iframe>')
     found = list(vidhide.VidHideReclipIE._extract_embed_urls("https://blog.example/post", html))
-    assert found == [EMBED, "https://vidhidepro.com/e/zzzzzz999999", "https://recordplay.biz/e/icpg81x5osfz"]
+    assert found == [EMBED, "https://vidhidepro.com/e/zzzzzz999999", "https://recordplay.biz/e/icpg81x5osfz",
+                     "https://sfastwish.com/e/goindev9r6rc"]
 
 
 @pytest.fixture
