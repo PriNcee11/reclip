@@ -27,7 +27,7 @@ Imagen: `ghcr.io/princee11/reclip:latest` (amd64, la publica CI en cada push a `
   captcha, se reintenta una vez con `--impersonate chrome`
   (`RECLIP_IMPERSONATE`, vacío para no reintentar).
 - **Embeds VidHide (plugin de yt-dlp).** `ytdlp-plugins/` lleva un extractor para
-  reproductores tipo VidHide (`playrecord.biz`, `recordplay.biz`, `vidhide*.com` y StreamWish: cualquier dominio con "wish", p. ej. `sfastwish.com`): páginas que
+  reproductores tipo VidHide (`playrecord.biz`, `recordplay.biz`, dominios `vidhide*`/`filelions*` y StreamWish: cualquiera con "wish", p. ej. `sfastwish.com`; siguen las redirecciones entre espejos): páginas que
   los incrustan en un `<iframe>` pasan de "Unsupported URL" a descargarse con su
   selector de calidad. Esos hosts disfrazan los trozos HLS de imagen (un PNG pegado
   delante del MPEG-TS); el plugin parchea el descargador de fragmentos de yt-dlp para

@@ -1,5 +1,6 @@
 import io
 import re
+import types
 
 import pytest
 import yt_dlp
@@ -90,11 +91,12 @@ def test_embed_regex_finds_iframes_any_case():
             "<iframe src=https://vidhidepro.com/e/zzzzzz999999 ></iframe>"
             '<iframe src="https://recordplay.biz/e/icpg81x5osfz" frameborder="0"></iframe>'
             '<IFRAME SRC="https://sfastwish.com/e/goindev9r6rc" FRAMEBORDER=0></IFRAME>'
+            '<IFRAME SRC="https://filelions.to/v/5d1k1rlpcdeb" FRAMEBORDER=0></IFRAME>'
             '<iframe src="https://www.youtube.com/embed/abcdefghijk"></iframe>'
             '<iframe src="https://evil.example/embed/abcdef123456"></iframe>')
     found = list(vidhide.VidHideReclipIE._extract_embed_urls("https://blog.example/post", html))
     assert found == [EMBED, "https://vidhidepro.com/e/zzzzzz999999", "https://recordplay.biz/e/icpg81x5osfz",
-                     "https://sfastwish.com/e/goindev9r6rc"]
+                     "https://sfastwish.com/e/goindev9r6rc", "https://filelions.to/v/5d1k1rlpcdeb"]
 
 
 @pytest.fixture
@@ -109,7 +111,12 @@ def ie(monkeypatch):
         extractor.m3u8_calls.append((url, headers))
         return extractor.m3u8_results.get(url, [])
 
-    monkeypatch.setattr(extractor, "_download_webpage", lambda url, video_id, **kw: extractor.page)
+    extractor.final_url = None
+
+    def fake_page(url, video_id, **kw):
+        return extractor.page, types.SimpleNamespace(url=extractor.final_url or url)
+
+    monkeypatch.setattr(extractor, "_download_webpage_handle", fake_page)
     monkeypatch.setattr(extractor, "_extract_m3u8_formats", fake_m3u8)
     return extractor
 
@@ -134,6 +141,14 @@ def test_extract_falls_back_to_next_link(ie):
     info = ie._real_extract(EMBED)
     assert info["formats"] == [fmt] and len(ie.m3u8_calls) == 2
     assert info["title"] == "abcdef123456"  # "Embed" is not a title
+
+
+def test_extract_follows_mirror_redirects(ie):
+    ie.final_url = "https://callistanise.com/v/abcdef123456"
+    ie.m3u8_results["https://callistanise.com/stream/aa/bb/1/2/master.m3u8"] = [{"format_id": "hls-1"}]
+    info = ie._real_extract("https://filelions.to/v/abcdef123456")
+    assert info["http_headers"]["Referer"] == "https://callistanise.com/"
+    assert ie.m3u8_calls[0][1]["Origin"] == "https://callistanise.com"
 
 
 def test_extract_without_links_is_a_clear_error(ie):

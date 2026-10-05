@@ -6,9 +6,10 @@ yt-dlp has no extractor for them, so pages that iframe one fail with "Unsupporte
 With this plugin yt-dlp's generic extractor finds the iframe and this extractor returns
 the HLS formats.
 
-StreamWish embeds (sfastwish.com, flaswish.com...) use the same player. Their domain
-changes often, so any host with "wish" in its name is accepted. Add other mirrors to
-_DOMAINS (tested against live pages: playrecord.biz, recordplay.biz, sfastwish.com).
+StreamWish (sfastwish.com, flaswish.com...) and FileLions (VidHide's old name) use the
+same player. Their domains change often and redirect to each other, so any host named
+vidhide*, filelions* or *wish* is accepted. Add other mirrors to _DOMAINS (tested against
+live pages: playrecord.biz, recordplay.biz, sfastwish.com, filelions.to).
 
 Their HLS segments are disguised as images: a tiny PNG glued in front of the real
 MPEG-TS. yt-dlp would concatenate PNG+TS+PNG+TS... into an unplayable file, so this
@@ -23,7 +24,8 @@ from yt_dlp.downloader.fragment import FragmentFD
 from yt_dlp.extractor.common import InfoExtractor
 from yt_dlp.utils import ExtractorError, decode_packed_codes, float_or_none, urljoin
 
-_DOMAINS = (r"(?:playrecord\.biz|recordplay\.biz|vidhide(?:pro|vip|plus|hub)?\.com"
+_DOMAINS = (r"(?:playrecord\.biz|recordplay\.biz"
+            r"|(?:vidhide|filelions?)[a-z0-9-]*\.[a-z]{2,10}"
             r"|[a-z0-9-]*wish[a-z0-9-]*\.[a-z]{2,10})")
 _PATH = r"/(?:embed|e|v)/(?P<id>[0-9a-z]{12})"
 
@@ -87,7 +89,8 @@ class VidHideReclipIE(InfoExtractor):
 
     def _real_extract(self, url):
         video_id = self._match_id(url)
-        webpage = self._download_webpage(url, video_id)
+        webpage, urlh = self._download_webpage_handle(url, video_id)
+        url = urlh.url  # these hosts redirect between mirrors; the last one serves the video
         script = unpack(webpage)
         streams = stream_urls(script, url)
         if not streams:
