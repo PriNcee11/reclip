@@ -333,6 +333,31 @@
       margin-bottom: 8px;
     }
 
+    /* Past downloads (from the server's history), below this session's cards */
+    .card.history { opacity: 0.75; transition: opacity 0.2s; }
+    .card.history:hover { opacity: 1; }
+    /* ...and stay compact while being downloaded again */
+    .card.compact { padding: 10px 14px; }
+    .card.compact .card-thumb { width: 84px; min-width: 84px; height: 54px; }
+    .card.compact .card-meta { margin-bottom: 4px; }
+
+    .more-btn {
+      display: block;
+      width: 100%;
+      margin-top: 4px;
+      padding: 10px;
+      border: 1.5px dashed var(--card-border);
+      border-radius: 10px;
+      background: transparent;
+      color: var(--muted);
+      font-family: 'DM Mono', monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      cursor: pointer;
+    }
+    .more-btn:hover { color: var(--fg); border-color: var(--muted); }
+
     .card.flash { animation: flash 1.4s ease-out; }
     @keyframes flash {
       0%, 100% { box-shadow: 0 0 0 0 transparent; }
@@ -439,6 +464,10 @@
         height: 160px;
       }
       .card-title { white-space: normal; }
+      /* History cards stay compact rows on the phone too */
+      .card.compact { flex-direction: row; gap: 12px; }
+      .card.compact .card-thumb { width: 72px; min-width: 72px; height: 48px; }
+      .card.compact .card-title { white-space: nowrap; }
       .controls { flex-wrap: wrap; }
       .fetch-btn { width: 100%; }
       .dl-all-btn { flex: 1 1 auto; }
@@ -464,6 +493,7 @@
     </div>
 
     <div id="cards" class="cards"></div>
+    <div id="more"></div>
     <div id="dl-all"></div>
 
     <div class="footer">
@@ -518,8 +548,13 @@
 
     function esc(s) {
       const d = document.createElement('div');
-      d.textContent = s;
+      d.textContent = s ?? '';
       return d.innerHTML;
+    }
+
+    // For attribute values: esc() leaves quotes alone
+    function escAttr(s) {
+      return esc(s).replace(/"/g, '&quot;');
     }
 
     function friendlyError(err) {
@@ -542,10 +577,14 @@
 
     async function go() {
       const textarea = document.getElementById('urls');
-      // Links that already have a card (unless it failed or was cleared) are not
-      // fetched again; their card blinks instead, so the paste isn't silently dropped.
+      // Links that already have a card in this session (unless it failed or was
+      // cleared) are not fetched again; their card blinks instead, so the paste
+      // isn't silently dropped. History cards don't count: a new card on top says
+      // "Already downloaded" and offers the qualities.
       const known = new Map();
-      cardData.forEach((c, i) => { if (c.status !== 'info-error' && !c.cleared) known.set(c.url, i); });
+      cardData.forEach((c, i) => {
+        if (c.status !== 'info-error' && c.status !== 'history' && !c.cleared) known.set(c.url, i);
+      });
       const parsed = parseUrls(textarea.value);
       const urls = parsed.filter(u => !known.has(u));
       parsed.filter(u => known.has(u)).forEach((u, n) => flashCard(known.get(u), n === 0 && !urls.length));
@@ -590,12 +629,17 @@
         }
       }
 
-      for (let i = 0; i < urls.length; i++) {
-        const url = urls[i];
+      // Newest on top: the whole batch goes above the older cards, in paste order
+      const batch = [];
+      for (const url of urls) {
         const idx = cardData.length;
-        cardData.push({ url, status: 'loading' });
+        cardData.push({ url, status: 'loading', after: batch.length ? batch[batch.length - 1] : null });
         renderCard(idx);
+        batch.push(idx);
+      }
 
+      for (const idx of batch) {
+        const url = cardData[idx].url;
         try {
           const res = await fetch('/api/info', {
             method: 'POST',
@@ -644,7 +688,12 @@
         el = document.createElement('div');
         el.id = `card-${idx}`;
         el.className = 'card';
-        document.getElementById('cards').appendChild(el);
+        // History arrives oldest-last at the bottom; new links go on top
+        const list = document.getElementById('cards');
+        const prev = c.after != null && document.getElementById(`card-${c.after}`);
+        if (c.status === 'history') list.appendChild(el);
+        else if (prev) prev.after(el);
+        else list.prepend(el);
       }
 
       // Loading skeleton
@@ -680,15 +729,16 @@
 
       // Ready / downloading / done / error states
       const seen = c.status === 'ready' && c.downloaded;
-      el.className = 'card' + (seen ? ' seen' : '') + (c.status === 'done' ? ' is-done' : '');
+      const past = c.status === 'history';
+      el.className = 'card' + (seen ? ' seen' : '') + (c.status === 'done' ? ' is-done' : '') + (past ? ' history' : '') + (c.compact ? ' compact' : '');
       // Queued/finished cards keep the format they were queued with
-      const isAudio = (c.format || currentFormat) === 'audio';
+      const isAudio = !past && (c.format || currentFormat) === 'audio';
 
       let thumbHtml;
       if (isAudio) {
         thumbHtml = `<div class="no-thumb" style="color:var(--accent)"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg></div>`;
       } else if (c.thumbnail) {
-        thumbHtml = `<img src="${c.thumbnail}" alt="">`;
+        thumbHtml = `<img src="${escAttr(c.thumbnail)}" alt="" loading="lazy">`;
       } else {
         thumbHtml = `<div class="no-thumb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="m21 15-5-5L5 21"/></svg></div>`;
       }
@@ -701,7 +751,10 @@
       }
 
       let actionHtml = '';
-      if (c.status === 'ready') {
+      if (past) {
+        actionHtml = `<button class="card-dl-btn" onclick="dlCard(${idx})">Download again</button>
+          <span class="card-status">Downloaded ${esc(fmtWhen(c.downloaded.at))} as ${c.downloaded.format === 'audio' ? 'MP3' : 'MP4'}</span>`;
+      } else if (c.status === 'ready') {
         actionHtml = `<button class="card-dl-btn" onclick="dlCard(${idx})">${seen ? 'Download again' : 'Download'}</button>${qualityChips}`;
       } else if (c.status === 'queued') {
         actionHtml = `<button class="card-dl-btn" onclick="unqueueCard(${idx})">Remove</button>
@@ -742,7 +795,8 @@
 
     function renderBar() {
       const box = document.getElementById('dl-all');
-      if (!cardData.some(c => !c.cleared)) { box.innerHTML = ''; return; }
+      // Only this session's cards count; the history alone needs no bar
+      if (!cardData.some(c => !c.cleared && c.status !== 'history')) { box.innerHTML = ''; return; }
 
       const n = Object.fromEntries(Object.keys(KINDS).map(k => [k, countKind(k)]));
       const loading = cardData.some(c => c.status === 'loading');
@@ -790,6 +844,43 @@
         }
       });
       renderBar();
+    }
+
+    // --- history (past downloads, newest first) ---
+
+    const HISTORY_PAGE = 50;
+    let historyLoaded = 0;
+
+    async function loadHistory() {
+      const box = document.getElementById('more');
+      try {
+        const res = await fetch(`/api/history?limit=${HISTORY_PAGE}&offset=${historyLoaded}`);
+        const data = await res.json();
+        // A download finished meanwhile shifts the pages: skip links already shown
+        const shown = new Set(cardData.filter(c => c.status === 'history').map(c => c.url));
+        for (const e of data.entries || []) {
+          if (shown.has(e.url)) continue;
+          const idx = cardData.length;
+          cardData.push({
+            url: e.url,
+            status: 'history',
+            compact: true,
+            title: e.title || '',
+            thumbnail: e.thumbnail || '',
+            uploader: e.uploader || '',
+            duration: e.duration,
+            downloaded: { at: e.at, format: e.format },
+          });
+          drawCard(idx);
+        }
+        historyLoaded += (data.entries || []).length;
+        const left = (data.total || 0) - historyLoaded;
+        box.innerHTML = left > 0
+          ? `<button class="more-btn" onclick="loadHistory()">Show older (${left})</button>`
+          : '';
+      } catch {
+        box.innerHTML = '';
+      }
     }
 
     function pickFormat(idx, formatId) {
@@ -862,6 +953,9 @@
             format: c.format,
             format_id: c.selectedFormatId,
             title: c.title || '',
+            thumbnail: c.thumbnail || '',
+            uploader: c.uploader || '',
+            duration: c.duration,
           }),
         });
         const data = await res.json();
@@ -910,6 +1004,8 @@
     function dlAll() {
       cardData.forEach((c, i) => { if (KINDS.todo(c)) dlCard(i); });
     }
+
+    loadHistory();
   </script>
 </body>
 </html>

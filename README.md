@@ -45,6 +45,12 @@ Imagen: `ghcr.io/princee11/reclip:latest` (amd64, la publica CI en cada push a `
   `RECLIP_DATA_DIR` (por defecto `/app/data`); va aparte de `downloads/` porque esa
   se poda por antigüedad. Si no se puede escribir, se avisa en el log y la descarga
   sigue.
+- **Historial en la página.** Al abrirla se pintan las últimas descargas (50, y
+  «Show older» para más; `GET /api/history?limit=&offset=`), más recientes
+  primero, como tarjetas compactas con **Download again**. Los enlaces nuevos
+  entran arriba, en el orden en que se pegaron. Desde 2026-10-16 el historial
+  guarda también miniatura, autor y duración; las entradas anteriores salen sin
+  miniatura. Ojo: como la app no tiene login, quien llegue al puerto ve el historial.
 - **Barra fija abajo** con el recuento (por descargar, ya descargados, en curso,
   fallidos, hechos), cada número salta a su primera tarjeta, **Download all** y
   **Clear finished** para quitar de la lista las terminadas. Las hechas se atenúan;

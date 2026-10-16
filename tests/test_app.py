@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import time
 
 import pytest
 
@@ -329,3 +330,42 @@ def test_unwritable_history_does_not_break_downloads(client, monkeypatch, fx):
         f.write("x")
     fake_ytdlp(monkeypatch, writes_file("mp4"))
     assert run_job("https://example.com/v")["status"] == "done"
+
+
+def test_history_endpoint_newest_first_paged(client):
+    for n in (1, 2, 3):
+        reclip.history_record(f"https://example.com/{n}", str(n), "video")
+    reclip.history_record("https://example.com/1", "1", "audio")  # downloaded again: now the newest
+    body = client.get("/api/history?limit=2").json
+    assert body["total"] == 3
+    assert [e["title"] for e in body["entries"]] == ["1", "3"]
+    assert [e["title"] for e in client.get("/api/history?limit=2&offset=2").json["entries"]] == ["2"]
+    assert client.get("/api/history?limit=x").status_code == 400
+
+
+def test_history_empty(client):
+    assert client.get("/api/history").json == {"entries": [], "total": 0}
+
+
+def test_download_keeps_card_details_in_history(client, monkeypatch, fx):
+    fake_ytdlp(monkeypatch, writes_file("mp4"))
+    res = client.post("/api/download", json={
+        "url": "https://example.com/v", "title": "T", "uploader": " Someone ", "duration": 61,
+        "thumbnail": "https://img.example/t.jpg",
+    })
+    job_id = res.json["job_id"]
+    for _ in range(100):
+        if reclip.jobs[job_id]["status"] != "downloading":
+            break
+        time.sleep(0.02)
+    entry = client.get("/api/history").json["entries"][0]
+    assert entry == {**entry, "title": "T", "uploader": "Someone", "duration": 61,
+                     "thumbnail": "https://img.example/t.jpg"}
+
+
+@pytest.mark.parametrize("data", [
+    {"thumbnail": "javascript:alert(1)", "duration": True, "uploader": "  "},
+    {"thumbnail": 5, "duration": "61", "uploader": None},
+])
+def test_history_meta_drops_bad_values(data):
+    assert reclip.history_meta(data) == {}

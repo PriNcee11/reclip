@@ -269,12 +269,28 @@ def history_lookup(url):
         return load_history().get(history_key(url))
 
 
-def history_record(url, title, format_choice):
+def history_meta(data):
+    """Card details worth keeping with a history entry (only well-formed ones)."""
+    meta = {}
+    thumbnail = data.get("thumbnail")
+    if isinstance(thumbnail, str) and urlparse(thumbnail).scheme in ("http", "https"):
+        meta["thumbnail"] = thumbnail[:1000]
+    uploader = data.get("uploader")
+    if isinstance(uploader, str) and uploader.strip():
+        meta["uploader"] = uploader.strip()[:200]
+    duration = data.get("duration")
+    if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
+        meta["duration"] = duration
+    return meta
+
+
+def history_record(url, title, format_choice, meta=None):
     entry = {
         "url": url,
         "title": title,
         "format": format_choice,
         "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        **(meta or {}),
     }
     key = history_key(url)
     with history_lock:
@@ -374,7 +390,7 @@ def run_download(job_id, url, format_choice, format_id):
             job["filename"] = f"{safe_title}{ext}" if safe_title else os.path.basename(chosen)
         else:
             job["filename"] = os.path.basename(chosen)
-        history_record(url, title, format_choice)
+        history_record(url, title, format_choice, job.get("meta"))
     except subprocess.TimeoutExpired:
         job["status"] = "error"
         job["error"] = "Download timed out (5 min limit)"
@@ -496,6 +512,20 @@ def get_playlist_info():
         return jsonify({"error": str(e)}), 400
 
 
+@app.route("/api/history")
+def get_history():
+    """Past downloads, newest first, a page at a time."""
+    try:
+        limit = max(1, min(int(request.args.get("limit", 50)), 500))
+        offset = max(0, int(request.args.get("offset", 0)))
+    except ValueError:
+        return jsonify({"error": "limit and offset must be numbers"}), 400
+    with history_lock:
+        entries = list(load_history().values())
+    entries.reverse()
+    return jsonify({"entries": entries[offset:offset + limit], "total": len(entries)})
+
+
 @app.route("/api/download", methods=["POST"])
 def start_download():
     data = request.json
@@ -508,7 +538,7 @@ def start_download():
         return jsonify({"error": "No URL provided"}), 400
 
     job_id = uuid.uuid4().hex[:10]
-    jobs[job_id] = {"status": "downloading", "url": url, "title": title}
+    jobs[job_id] = {"status": "downloading", "url": url, "title": title, "meta": history_meta(data)}
 
     thread = threading.Thread(target=run_download, args=(job_id, url, format_choice, format_id))
     thread.daemon = True
