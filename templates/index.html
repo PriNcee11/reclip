@@ -18,6 +18,7 @@
       --card-border: #e2ded6;
       --success: #2d8a4e;
       --error: #c43d3d;
+      --warn: #a5610a;
       --radius: 14px;
       --shimmer: linear-gradient(90deg, #ebe8e2 25%, #f0ede7 50%, #ebe8e2 75%);
     }
@@ -319,15 +320,78 @@
       margin-top: 4px;
     }
 
-    /* Download all bar */
+    /* Finished cards step back so the pending ones stand out */
+    .card.is-done { opacity: 0.55; transition: opacity 0.2s; }
+    .card.is-done:hover { opacity: 1; }
+
+    /* Link downloaded before (any earlier session) */
+    .card.seen { border-color: rgba(165, 97, 10, 0.35); }
+    .card-seen {
+      font-size: 0.68rem;
+      color: var(--warn);
+      line-height: 1.4;
+      margin-bottom: 8px;
+    }
+
+    .card.flash { animation: flash 1.4s ease-out; }
+    @keyframes flash {
+      0%, 100% { box-shadow: 0 0 0 0 transparent; }
+      25% { box-shadow: 0 0 0 3px var(--accent); }
+    }
+
+    /* Summary + bulk actions, pinned to the bottom of the screen (the sticky box
+       must be the one sitting in .page, not the bar inside it) */
+    #dl-all {
+      position: sticky;
+      bottom: 12px;
+      z-index: 5;
+    }
     .dl-all-bar {
       display: flex;
-      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 10px;
       margin-top: 16px;
+      padding: 10px;
+      border: 1.5px solid var(--card-border);
+      border-radius: var(--radius);
+      background: rgba(244, 241, 235, 0.94);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      box-shadow: 0 8px 28px rgba(58, 58, 56, 0.12);
     }
+    .bar-summary {
+      flex: 1 1 220px;
+      font-size: 0.68rem;
+      color: var(--muted);
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      line-height: 1.7;
+      padding-left: 4px;
+    }
+    .bar-stat {
+      border: none;
+      background: none;
+      padding: 0;
+      font: inherit;
+      letter-spacing: inherit;
+      text-transform: inherit;
+      color: inherit;
+      cursor: pointer;
+      text-decoration: underline dotted;
+      text-underline-offset: 3px;
+    }
+    .bar-stat:hover { color: var(--fg); }
+    .bar-stat.todo { color: var(--fg); font-weight: 500; }
+    .bar-stat.active { color: var(--accent); }
+    .bar-stat.seen { color: var(--warn); }
+    .bar-stat.failed { color: var(--error); }
+    .bar-stat.clear { text-decoration: underline; }
+    .bar-stat.all-done { color: var(--success); text-decoration: none; cursor: default; }
+    .bar-sep { margin: 0 6px; opacity: 0.6; }
     .dl-all-btn {
-      flex: 1;
-      padding: 12px;
+      flex: 0 0 auto;
+      padding: 11px 16px;
       border: none;
       border-radius: 10px;
       background: var(--fg);
@@ -377,6 +441,7 @@
       .card-title { white-space: normal; }
       .controls { flex-wrap: wrap; }
       .fetch-btn { width: 100%; }
+      .dl-all-btn { flex: 1 1 auto; }
     }
   </style>
 </head>
@@ -438,6 +503,19 @@
       return `${m}:${sec.toString().padStart(2, '0')}`;
     }
 
+    // "today at 18:05" / "on 12 Oct" / "on 12 Oct 2025"
+    function fmtWhen(iso) {
+      const d = new Date(iso);
+      if (isNaN(d)) return '';
+      const now = new Date();
+      if (d.toDateString() === now.toDateString()) {
+        return 'today at ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      }
+      const opts = { day: 'numeric', month: 'short' };
+      if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
+      return 'on ' + d.toLocaleDateString(undefined, opts);
+    }
+
     function esc(s) {
       const d = document.createElement('div');
       d.textContent = s;
@@ -464,9 +542,13 @@
 
     async function go() {
       const textarea = document.getElementById('urls');
-      // Links that already have a card (unless it failed) are not fetched again
-      const known = new Set(cardData.filter(c => c.status !== 'info-error').map(c => c.url));
-      const urls = parseUrls(textarea.value).filter(u => !known.has(u));
+      // Links that already have a card (unless it failed or was cleared) are not
+      // fetched again; their card blinks instead, so the paste isn't silently dropped.
+      const known = new Map();
+      cardData.forEach((c, i) => { if (c.status !== 'info-error' && !c.cleared) known.set(c.url, i); });
+      const parsed = parseUrls(textarea.value);
+      const urls = parsed.filter(u => !known.has(u));
+      parsed.filter(u => known.has(u)).forEach((u, n) => flashCard(known.get(u), n === 0 && !urls.length));
       textarea.value = '';
       if (!urls.length) return;
 
@@ -533,6 +615,7 @@
               uploader: data.uploader || '',
               formats: data.formats || [],
               selectedFormatId: data.formats?.[0]?.id || null,
+              downloaded: data.downloaded || null,
             };
           }
         } catch (err) {
@@ -541,15 +624,22 @@
         renderCard(idx);
       }
 
-      renderDownloadAll();
-
       btn.disabled = false;
       btn.textContent = 'Fetch';
     }
 
     function renderCard(idx) {
+      drawCard(idx);
+      renderBar();
+    }
+
+    function drawCard(idx) {
       const c = cardData[idx];
       let el = document.getElementById(`card-${idx}`);
+      if (c.cleared) {
+        if (el) el.remove();
+        return;
+      }
       if (!el) {
         el = document.createElement('div');
         el.id = `card-${idx}`;
@@ -589,7 +679,8 @@
       }
 
       // Ready / downloading / done / error states
-      el.className = 'card';
+      const seen = c.status === 'ready' && c.downloaded;
+      el.className = 'card' + (seen ? ' seen' : '') + (c.status === 'done' ? ' is-done' : '');
       // Queued/finished cards keep the format they were queued with
       const isAudio = (c.format || currentFormat) === 'audio';
 
@@ -611,7 +702,7 @@
 
       let actionHtml = '';
       if (c.status === 'ready') {
-        actionHtml = `<button class="card-dl-btn" onclick="dlCard(${idx})">Download</button>${qualityChips}`;
+        actionHtml = `<button class="card-dl-btn" onclick="dlCard(${idx})">${seen ? 'Download again' : 'Download'}</button>${qualityChips}`;
       } else if (c.status === 'queued') {
         actionHtml = `<button class="card-dl-btn" onclick="unqueueCard(${idx})">Remove</button>
           <span class="card-status">Queued #${queuePosition(idx)}</span>`;
@@ -630,16 +721,75 @@
         <div class="card-body">
           <div class="card-title">${esc(c.title || 'Untitled')}</div>
           <div class="card-meta">${esc(c.uploader)}${c.duration ? ' · ' + fmtDur(c.duration) : ''}</div>
+          ${seen ? `<div class="card-seen">Already downloaded ${esc(fmtWhen(c.downloaded.at))} as ${c.downloaded.format === 'audio' ? 'MP3' : 'MP4'}</div>` : ''}
           <div class="card-actions">${actionHtml}</div>
         </div>
       `;
     }
 
-    function renderDownloadAll() {
-      const ready = cardData.filter(c => c.status === 'ready').length;
-      document.getElementById('dl-all').innerHTML = ready > 1
-        ? `<div class="dl-all-bar"><button class="dl-all-btn" onclick="dlAll()">Download All (${ready})</button></div>`
-        : '';
+    // Which cards each counter of the bar stands for (also used to jump to them)
+    const KINDS = {
+      todo: c => c.status === 'ready' && !c.downloaded,
+      seen: c => c.status === 'ready' && !!c.downloaded,
+      active: c => c.status === 'queued' || c.status === 'downloading',
+      done: c => c.status === 'done',
+      failed: c => c.status === 'error' || c.status === 'info-error',
+    };
+
+    function countKind(kind) {
+      return cardData.filter(c => !c.cleared && KINDS[kind](c)).length;
+    }
+
+    function renderBar() {
+      const box = document.getElementById('dl-all');
+      if (!cardData.some(c => !c.cleared)) { box.innerHTML = ''; return; }
+
+      const n = Object.fromEntries(Object.keys(KINDS).map(k => [k, countKind(k)]));
+      const loading = cardData.some(c => c.status === 'loading');
+      const stat = (kind, text) => `<button class="bar-stat ${kind}" onclick="jumpTo('${kind}')">${text}</button>`;
+      const parts = [];
+      if (n.todo) parts.push(stat('todo', `${n.todo} to download`));
+      if (n.seen) parts.push(stat('seen', `${n.seen} already downloaded`));
+      if (n.active) parts.push(stat('active', `${n.active} in progress`));
+      if (n.failed) parts.push(stat('failed', `${n.failed} failed`));
+      if (n.done) parts.push(stat('done', `${n.done} done`));
+      if (!n.todo && !n.seen && !n.active && !loading) {
+        parts.unshift('<span class="bar-stat all-done">Nothing left to download</span>');
+      }
+
+      if (cardData.some(c => !c.cleared && (c.status === 'done' || c.status === 'info-error'))) {
+        parts.push('<button class="bar-stat clear" onclick="clearFinished()">Clear finished</button>');
+      }
+      box.innerHTML = `<div class="dl-all-bar">
+          <div class="bar-summary">${parts.join('<span class="bar-sep">·</span>')}</div>
+          ${n.todo ? `<button class="dl-all-btn" onclick="dlAll()">Download all (${n.todo})</button>` : ''}
+        </div>`;
+    }
+
+    function flashCard(idx, scroll) {
+      const el = document.getElementById(`card-${idx}`);
+      if (!el) return;
+      if (scroll) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.remove('flash');
+      void el.offsetWidth; // restart the animation
+      el.classList.add('flash');
+    }
+
+    // Scroll to the first card of that kind
+    function jumpTo(kind) {
+      const idx = cardData.findIndex(c => !c.cleared && KINDS[kind](c));
+      if (idx >= 0) flashCard(idx, true);
+    }
+
+    // Drop done and unfetchable cards from the list (the history still remembers them)
+    function clearFinished() {
+      cardData.forEach((c, i) => {
+        if (c.status === 'done' || c.status === 'info-error') {
+          c.cleared = true;
+          drawCard(i);
+        }
+      });
+      renderBar();
     }
 
     function pickFormat(idx, formatId) {
@@ -656,7 +806,6 @@
       c.queuedAt = ++queueSeq;
       c.error = null;
       renderCard(idx);
-      renderDownloadAll();
       pumpQueue();
     }
 
@@ -665,7 +814,6 @@
       cardData[idx].status = 'ready';
       renderCard(idx);
       renderQueued();
-      renderDownloadAll();
     }
 
     function queuedIndexes() {
@@ -758,8 +906,9 @@
       a.click();
     }
 
+    // Links downloaded before are left out: those need their own "Download again"
     function dlAll() {
-      cardData.forEach((c, i) => { if (c.status === 'ready') dlCard(i); });
+      cardData.forEach((c, i) => { if (KINDS.todo(c)) dlCard(i); });
     }
   </script>
 </body>

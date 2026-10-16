@@ -35,6 +35,20 @@ Imagen: `ghcr.io/princee11/reclip:latest` (amd64, la publica CI en cada push a `
   vía `PYTHONPATH=/app/ytdlp-plugins`. Espejos nuevos: añadirlos a `_DOMAINS`.
 - **Calidad elegida respetada** también en formatos que ya traen audio (HLS):
   `-f ID+bestaudio/ID/best` en vez de `ID+bestaudio/best`, que caía en "la mejor".
+- **Aviso de enlace ya descargado.** Cada descarga terminada se apunta en
+  `data/history.json` (URL, título, formato, fecha; máx. 5000, las más viejas
+  salen primero). Al pegar un enlace que ya se bajó, su tarjeta lo dice
+  ("Already downloaded on 12 Oct as MP4"), el botón pasa a **Download again** y
+  **Download all** se lo salta: hay que confirmarlo a mano. Reconoce el mismo vídeo
+  aunque cambie la forma del enlace (`youtu.be`/`watch?v=`/`shorts`, `twitter.com`/
+  `x.com`, `www.`, barra final, `utm_*`, `si`, `igsh`…). Ruta con
+  `RECLIP_DATA_DIR` (por defecto `/app/data`); va aparte de `downloads/` porque esa
+  se poda por antigüedad. Si no se puede escribir, se avisa en el log y la descarga
+  sigue.
+- **Barra fija abajo** con el recuento (por descargar, ya descargados, en curso,
+  fallidos, hechos), cada número salta a su primera tarjeta, **Download all** y
+  **Clear finished** para quitar de la lista las terminadas. Las hechas se atenúan;
+  pegar un enlace que ya está en la lista hace parpadear su tarjeta.
 - **Errores en el log:** cada fallo queda en `docker logs` con la URL y la línea
   `ERROR:` de yt-dlp.
 - Tests (`pytest`) y `ruff` en CI.

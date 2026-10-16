@@ -34,7 +34,9 @@ class Proc:
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setattr(reclip, "DOWNLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(reclip, "DOWNLOAD_DIR", str(tmp_path / "downloads"))
+    monkeypatch.setattr(reclip, "DATA_DIR", str(tmp_path / "data"))
+    os.makedirs(reclip.DOWNLOAD_DIR)
     reclip.jobs.clear()
     return reclip.app.test_client()
 
@@ -260,3 +262,70 @@ def test_download_timeout(client, monkeypatch, fx):
     fake_ytdlp(monkeypatch, handler)
     assert run_job("https://example.com/v")["error"] == "Download timed out (5 min limit)"
     assert not os.listdir(reclip.DOWNLOAD_DIR)
+
+
+# --- history ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("a,b", [
+    ("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s", "https://youtu.be/dQw4w9WgXcQ?si=abc"),
+    ("https://youtube.com/shorts/dQw4w9WgXcQ", "https://m.youtube.com/watch?feature=share&v=dQw4w9WgXcQ"),
+    ("https://twitter.com/a/status/5?s=20", "https://x.com/b/status/5"),
+    ("https://www.instagram.com/reel/Cx1/?igsh=zz&utm_source=ig", "https://instagram.com/reel/Cx1"),
+    ("https://example.com/v?id=1&b=2", "https://example.com/v/?b=2&id=1"),
+])
+def test_history_key_same_video(a, b):
+    assert reclip.history_key(a) == reclip.history_key(b)
+
+
+@pytest.mark.parametrize("a,b", [
+    ("https://x.com/a/status/5/video/1", "https://x.com/a/status/5/video/2"),
+    ("https://example.com/v?id=1", "https://example.com/v?id=2"),
+    ("https://youtu.be/dQw4w9WgXcQ", "https://youtu.be/aaaaaaaaaaa"),
+])
+def test_history_key_different_videos(a, b):
+    assert reclip.history_key(a) != reclip.history_key(b)
+
+
+def test_finished_download_is_remembered_and_reported_by_info(client, monkeypatch, fx):
+    fake_ytdlp(monkeypatch, writes_file("mp3"))
+    run_job("https://youtu.be/dQw4w9WgXcQ", format_choice="audio", title="Song")
+
+    data = {"title": "Song", "formats": []}
+    fake_ytdlp(monkeypatch, lambda cmd: Proc(0, stdout=json.dumps(data)))
+    seen = client.post("/api/info", json={"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}).json["downloaded"]
+    assert seen["title"] == "Song" and seen["format"] == "audio" and seen["at"]
+    assert client.post("/api/info", json={"url": "https://youtu.be/other123456"}).json["downloaded"] is None
+
+
+def test_failed_download_is_not_remembered(client, monkeypatch, fx):
+    fake_ytdlp(monkeypatch, lambda cmd: Proc(1, stderr="ERROR: boom"))
+    run_job("https://example.com/v")
+    assert reclip.history_lookup("https://example.com/v") is None
+
+
+def test_info_via_fxtwitter_reports_history(client, monkeypatch, fx):
+    reclip.history_record(TWEET_URL, "t", "video")
+    fake_ytdlp(monkeypatch, lambda cmd: Proc(1, stderr="ERROR: [twitter] 123: Video #1 is unavailable"))
+    fx.tweet = tweet(video())
+    assert client.post("/api/info", json={"url": TWEET_URL}).json["downloaded"]["format"] == "video"
+
+
+def test_history_survives_bad_file_and_is_capped(client, monkeypatch):
+    os.makedirs(reclip.DATA_DIR)
+    with open(reclip.history_path(), "w") as f:
+        f.write("{not json")
+    assert reclip.history_lookup("https://example.com/1") is None
+
+    monkeypatch.setattr(reclip, "HISTORY_MAX", 2)
+    for n in (1, 2, 1, 3):
+        reclip.history_record(f"https://example.com/{n}", str(n), "video")
+    with open(reclip.history_path()) as f:
+        assert [e["title"] for e in json.load(f).values()] == ["1", "3"]
+
+
+def test_unwritable_history_does_not_break_downloads(client, monkeypatch, fx):
+    with open(reclip.DATA_DIR, "w") as f:  # a file where the directory should be
+        f.write("x")
+    fake_ytdlp(monkeypatch, writes_file("mp4"))
+    assert run_job("https://example.com/v")["status"] == "done"

@@ -8,13 +8,17 @@ import threading
 import urllib.error
 import urllib.request
 import uuid
-from urllib.parse import quote, urlparse
+from datetime import datetime
+from urllib.parse import parse_qsl, quote, urlencode, urlparse
 
 from flask import Flask, jsonify, render_template, request, send_file
 
 app = Flask(__name__)
 DOWNLOAD_DIR = os.path.join(os.path.dirname(__file__), "downloads")
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+# Persistent state (download history). Keep it out of DOWNLOAD_DIR: that one gets
+# pruned by age, and the history must outlive the files.
+DATA_DIR = os.environ.get("RECLIP_DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [reclip] %(levelname)s %(message)s")
 log = logging.getLogger("reclip")
@@ -35,7 +39,19 @@ TWEET_RE = re.compile(
     re.IGNORECASE,
 )
 
+YOUTUBE_RE = re.compile(
+    r"^https?://(?:www\.|m\.|music\.)?"
+    r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|live/|embed/)|youtu\.be/)"
+    r"(?P<id>[\w-]{11})",
+    re.IGNORECASE,
+)
+# Query parameters that only track who shared the link; they don't change the video.
+TRACKING_PARAMS = {"si", "s", "t", "feature", "pp", "igsh", "igshid", "fbclid", "gclid",
+                   "mibextid", "ref", "ref_src", "is_from_webapp", "sender_device"}
+HISTORY_MAX = 5000
+
 jobs = {}
+history_lock = threading.Lock()
 
 
 def parse_ytdlp_json(stdout):
@@ -209,6 +225,74 @@ def fallback_allowed(url):
     return FXTWITTER_ENABLED and parse_tweet_url(url) is not None
 
 
+# --- Download history -------------------------------------------------------
+
+
+def history_key(url):
+    """Same key for the different spellings of one video's link."""
+    url = url.strip()
+    ref = parse_tweet_url(url)
+    if ref:
+        return f"x:{ref[1]}" + (f"/{ref[2]}" if ref[2] else "")
+    m = YOUTUBE_RE.match(url)
+    if m:
+        return f"youtube:{m.group('id')}"
+    p = urlparse(url)
+    host = (p.hostname or "").removeprefix("www.")
+    query = sorted(
+        (k, v) for k, v in parse_qsl(p.query, keep_blank_values=True)
+        if not k.lower().startswith("utm_") and k.lower() not in TRACKING_PARAMS
+    )
+    key = host + p.path.rstrip("/")
+    return f"{key}?{urlencode(query)}" if query else key
+
+
+def history_path():
+    return os.path.join(DATA_DIR, "history.json")
+
+
+def load_history():
+    try:
+        with open(history_path(), encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        log.warning("could not read history: %s", e)
+        return {}
+
+
+def history_lookup(url):
+    """When (and how) this link was downloaded before, or None."""
+    with history_lock:
+        return load_history().get(history_key(url))
+
+
+def history_record(url, title, format_choice):
+    entry = {
+        "url": url,
+        "title": title,
+        "format": format_choice,
+        "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    key = history_key(url)
+    with history_lock:
+        history = load_history()
+        history.pop(key, None)  # re-insert so the oldest entries go first
+        history[key] = entry
+        while len(history) > HISTORY_MAX:
+            history.pop(next(iter(history)))
+        tmp = history_path() + ".tmp"
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(history, f, ensure_ascii=False)
+            os.replace(tmp, history_path())
+        except OSError as e:
+            log.warning("could not save history: %s", e)
+
+
 # --- Downloads -------------------------------------------------------------
 
 
@@ -290,6 +374,7 @@ def run_download(job_id, url, format_choice, format_id):
             job["filename"] = f"{safe_title}{ext}" if safe_title else os.path.basename(chosen)
         else:
             job["filename"] = os.path.basename(chosen)
+        history_record(url, title, format_choice)
     except subprocess.TimeoutExpired:
         job["status"] = "error"
         job["error"] = "Download timed out (5 min limit)"
@@ -319,7 +404,7 @@ def get_info():
                 try:
                     info = fx_info(url)
                     log.info("info via fxtwitter url=%s", url)
-                    return jsonify(info)
+                    return jsonify({**info, "downloaded": history_lookup(url)})
                 except FxError as e:
                     error = str(e)
                 except Exception as e:
@@ -352,6 +437,7 @@ def get_info():
             "duration": info.get("duration"),
             "uploader": info.get("uploader", ""),
             "formats": formats,
+            "downloaded": history_lookup(url),
         })
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Timed out fetching video info"}), 400

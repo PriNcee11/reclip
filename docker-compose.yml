@@ -7,7 +7,9 @@ services:
       - "8899:8899"
     volumes:
       - reclip-downloads:/app/downloads
+      - reclip-data:/app/data
     restart: unless-stopped
 
 volumes:
   reclip-downloads:
+  reclip-data:
