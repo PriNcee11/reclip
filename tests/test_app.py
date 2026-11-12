@@ -444,3 +444,47 @@ def test_prune_jobs_keeps_running_ones(client, monkeypatch):
     })
     reclip.prune_jobs()
     assert list(reclip.jobs) == ["b", "d", "e"]
+
+
+# --- already downloaded? (cheap lookup for the extension) ---------------------
+
+
+def wait_job(job_id):
+    for _ in range(100):
+        if reclip.jobs[job_id]["status"] != "downloading":
+            return
+        time.sleep(0.02)
+
+
+def test_lookup_finds_video_and_its_page(client, monkeypatch, fx):
+    fake_ytdlp(monkeypatch, writes_file("mp4"))
+    res = client.post("/api/download", json={
+        "url": "https://player.example/e/abc", "title": "T", "page": "https://site.example/post/1",
+    })
+    wait_job(res.json["job_id"])
+    for urls in (["https://player.example/e/abc"], ["https://www.site.example/post/1/?utm_source=x"]):
+        match = client.post("/api/lookup", json={"urls": urls}).json["match"]
+        assert match["status"] == "done" and match["title"] == "T"
+    assert client.post("/api/lookup", json={"urls": ["https://site.example/post/2"]}).json["match"] is None
+
+
+def test_lookup_reports_downloads_in_progress(client):
+    reclip.jobs["j1"] = {"status": "downloading", "url": "https://v.example/1", "title": "Running",
+                         "meta": {"page": "https://site.example/p"}}
+    match = client.post("/api/lookup", json={"urls": ["https://site.example/p"]}).json["match"]
+    assert match["status"] == "downloading" and match["id"] == "j1"
+
+
+@pytest.mark.parametrize("body", [{}, {"urls": "https://x.example"}])
+def test_lookup_needs_a_list(client, body):
+    assert client.post("/api/lookup", json=body).status_code == 400
+
+
+def test_lookup_ignores_junk(client):
+    res = client.post("/api/lookup", json={"urls": [5, None, "", "x" * 5000]})
+    assert res.json == {"match": None}
+
+
+def test_history_meta_keeps_only_http_pages():
+    assert reclip.history_meta({"page": "https://a.example/p"}) == {"page": "https://a.example/p"}
+    assert reclip.history_meta({"page": "javascript:alert(1)"}) == {}

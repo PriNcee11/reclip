@@ -19,12 +19,23 @@ function showMsg(kind, html) {
 
 // --- videos on this page --------------------------------------------------
 
+function alreadyHtml(m) {
+  const when = m.status === 'done'
+    ? `Ya lo descargaste el ${esc(String(m.at || '').slice(0, 10))}`
+    : 'Se está descargando ahora mismo';
+  return `${when}: <b>${esc(m.title || short(m.url))}</b>`;
+}
+
 function renderCandidates() {
   const list = state.candidates;
   const found = list.filter(c => c.kind !== 'page').length;
   const go = $('go');
   go.disabled = !list.length;
   go.textContent = found ? `Descargar vídeo de esta página (${found})` : list.length ? 'Descargar esta página' : 'Nada que descargar aquí';
+  if (state.seen && list.length) {
+    go.textContent = 'Descargar otra vez';
+    showMsg('seen', alreadyHtml(state.seen));
+  }
   $('candidates').innerHTML = list.map((c, i) => `
     <li title="${esc(c.url)}">
       <span class="kind">${esc(S.KIND_LABELS[c.kind] || c.kind)}${c.type ? ' ' + esc(c.type.toUpperCase()) : ''}</span>
@@ -39,22 +50,28 @@ async function download(candidates, force) {
   const result = await send({
     type: 'send',
     candidates,
-    options: { format, force, pageTitle: (state.scan && state.scan.title) || (tab && tab.title) || '' },
+    options: {
+      format, force,
+      pageTitle: (state.scan && state.scan.title) || (tab && tab.title) || '',
+      pageUrl: (tab && tab.url) || '',
+    },
   });
   $('go').disabled = false;
   if (result.ok) {
     showMsg('ok', `Descargando <b>${esc(result.title || short(result.candidate.url))}</b>. Se guardará solo al terminar.`);
   } else if (result.already) {
-    showMsg('', `Ya lo descargaste el ${esc(result.already.at.slice(0, 10))}: <b>${esc(result.info.title || '')}</b><br>
+    state.seen = result.already;
+    showMsg('seen', `${alreadyHtml(result.already)}<br>
       <button class="small" id="again">Descargar otra vez</button>`);
-    $('again').onclick = () => download([result.candidate], true);
+    $('again').onclick = () => download(state.candidates, true);
   } else {
     showMsg('error', esc(result.error || 'No se pudo'));
   }
   refreshJobs();
 }
 
-$('go').onclick = () => download(state.candidates, false);
+// Known as downloaded: the button itself means "again" (the notice is already shown)
+$('go').onclick = () => download(state.candidates, Boolean(state.seen));
 $('candidates').onclick = e => {
   const i = e.target.dataset && e.target.dataset.i;
   if (i !== undefined) download([state.candidates[Number(i)]], true);

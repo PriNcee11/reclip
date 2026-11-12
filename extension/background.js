@@ -61,17 +61,70 @@ async function getTab(kind, tabId) {
   return (await chrome.storage.session.get(tabKey(kind, tabId)))[tabKey(kind, tabId)];
 }
 
+// Badge: how many videos the page has. Green: there is something new to download.
+// Orange: this page or its video is already downloaded (or downloading right now).
+const BADGE_NEW = '#2d8a4e';
+const BADGE_SEEN = '#e85d2a';
+
 async function updateBadge(tabId) {
-  const [scan, streams] = await Promise.all([getTab('scan', tabId), getTab('streams', tabId)]);
+  const [scan, streams, seen] = await Promise.all([getTab('scan', tabId), getTab('streams', tabId), getTab('seen', tabId)]);
+  const match = seen && seen.match;
   const n = S.videoCount(scan, streams || []);
+  const text = n ? String(n) : match ? '✓' : '';
   try {
-    await chrome.action.setBadgeBackgroundColor({ tabId, color: '#e85d2a' });
-    await chrome.action.setBadgeText({ tabId, text: n ? String(n) : '' });
+    await chrome.action.setBadgeBackgroundColor({ tabId, color: match ? BADGE_SEEN : BADGE_NEW });
+    await chrome.action.setBadgeTextColor({ tabId, color: '#ffffff' });
+    await chrome.action.setBadgeText({ tabId, text });
   } catch {} // the tab is gone
 }
 
 async function clearTab(tabId) {
-  await chrome.storage.session.remove([tabKey('scan', tabId), tabKey('streams', tabId)]);
+  await chrome.storage.session.remove([tabKey('scan', tabId), tabKey('streams', tabId), tabKey('seen', tabId)]);
+}
+
+/** Ask ReClip (cheap, no yt-dlp) whether one of these links was downloaded or is downloading. */
+async function lookup(urls) {
+  const list = [...new Set(urls.filter(S.isHttp))];
+  if (!list.length) return null;
+  const { data } = await api('/api/lookup', { urls: list });
+  return data.match || null;
+}
+
+/** The page's own links: its address and its players and videos (not the captured streams). */
+function pageLinks(url, scan) {
+  return [url, scan && scan.url, ...((scan && scan.players) || []), ...((scan && scan.videos) || [])];
+}
+
+/** Keep the tab's "already downloaded" mark up to date (asks again only when its links change). */
+async function checkSeen(tabId, { again = false } = {}) {
+  let tab;
+  try { tab = await chrome.tabs.get(tabId); } catch { return null; }
+  if (!S.isHttp(tab.url)) return null;
+  const urls = pageLinks(tab.url, await getTab('scan', tabId));
+  const key = JSON.stringify(urls);
+  const old = await getTab('seen', tabId);
+  if (!again && old && old.key === key) return old;
+  let match;
+  try { match = await lookup(urls); } catch { return old; } // ReClip unreachable: keep what we had
+  const seen = { key, match };
+  await chrome.storage.session.set({ [tabKey('seen', tabId)]: seen });
+  await updateBadge(tabId);
+  return seen;
+}
+
+/** After a download starts or ends, refresh the mark of the tabs it may concern. */
+async function recheckTabs() {
+  const all = await chrome.storage.session.get(null);
+  const ids = Object.keys(all)
+    .filter(k => k.startsWith('scan:') || k.startsWith('seen:'))
+    .map(k => Number(k.split(':')[1]));
+  for (const id of new Set(ids)) checkSeen(id, { again: true });
+}
+
+function alreadyText(m) {
+  return m.status === 'done'
+    ? `Ya lo descargaste el ${String(m.at || '').slice(0, 10)}`
+    : 'Se está descargando ahora mismo';
 }
 
 chrome.webRequest.onBeforeRequest.addListener(
@@ -99,16 +152,34 @@ chrome.webRequest.onSendHeaders.addListener(
 
 chrome.tabs.onRemoved.addListener(tabId => { tabQueue(() => clearTab(tabId)); });
 
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  if (change.url) {
+    // In-page navigation (YouTube and the like): forget the old mark first
+    chrome.storage.session.remove(tabKey('seen', tabId)).then(() => checkSeen(tabId));
+  } else if (change.status === 'complete') {
+    checkSeen(tabId);
+  }
+});
+
 // --- downloading ---------------------------------------------------------
 
 const GENERIC_TITLES = /^(master|index|playlist|video|manifest|chunklist|embed|untitled)?$/i;
 
 /**
  * Try the candidates in order: the first one ReClip can read gets downloaded.
- * Without `force`, a video already in ReClip's history is reported, not downloaded.
+ * Without `force`, a page or video already downloaded (or downloading) is reported instead.
  */
-async function sendCandidates(candidates, { format = 'video', pageTitle = '', force = false } = {}) {
+async function sendCandidates(candidates, { format = 'video', pageTitle = '', pageUrl = '', force = false } = {}) {
   const errors = [];
+  if (!force) {
+    let match = null;
+    try {
+      match = await lookup([pageUrl, ...candidates.map(c => c.url)]);
+    } catch (e) {
+      return { ok: false, error: `No se puede hablar con ReClip (${e.message})` };
+    }
+    if (match) return { ok: false, already: match, candidate: candidates[0] };
+  }
   for (const c of candidates) {
     let info;
     try {
@@ -117,17 +188,18 @@ async function sendCandidates(candidates, { format = 'video', pageTitle = '', fo
       return { ok: false, error: `No se puede hablar con ReClip (${e.message})` };
     }
     if (info.error) { errors.push({ candidate: c, error: info.error }); continue; }
-    if (info.downloaded && !force) return { ok: false, already: info.downloaded, candidate: c, info };
+    if (info.downloaded && !force) return { ok: false, already: { ...info.downloaded, status: 'done' }, candidate: c };
 
     let title = (info.title || '').trim();
     if (c.kind === 'stream' || GENERIC_TITLES.test(title)) title = pageTitle || title;
     const { data } = await api('/api/download', {
       url: c.url, headers: c.headers || {}, format, title,
       thumbnail: info.thumbnail || '', uploader: info.uploader || '', duration: info.duration,
-      source: 'extension',
+      source: 'extension', page: S.isHttp(pageUrl) ? pageUrl : '',
     });
     if (data.error) return { ok: false, error: data.error };
     await track(data.job_id);
+    recheckTabs();
     return { ok: true, jobId: data.job_id, title, candidate: c };
   }
   return { ok: false, error: errors.length ? errors[errors.length - 1].error : 'No hay ningún vídeo que probar', errors };
@@ -193,6 +265,7 @@ async function pollJobs() {
         notify('Descarga fallida', [job.title || job.url, job.error || ''].join('\n'));
       }
     }
+    if (ended.length) recheckTabs();
     if (left) pollSoon(); else chrome.alarms.clear('poll');
   } finally {
     polling = false;
@@ -222,8 +295,9 @@ async function scanTab(tabId) {
 async function tabState(tabId) {
   const scan = await scanTab(tabId);
   const streams = (await getTab('streams', tabId)) || [];
+  const seen = await checkSeen(tabId);
   updateBadge(tabId);
-  return { scan, streams, candidates: S.buildCandidates(scan, streams) };
+  return { scan, streams, candidates: S.buildCandidates(scan, streams), seen: (seen && seen.match) || null };
 }
 
 // --- context menu --------------------------------------------------------
@@ -241,9 +315,11 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const first = [info.linkUrl, info.srcUrl, info.frameUrl].find(S.isHttp);
   const { scan, candidates } = await tabState(tab.id);
   const list = first ? [{ kind: info.linkUrl ? 'page' : 'player', url: first }, ...candidates] : candidates;
-  const result = await sendCandidates(list, { pageTitle: (scan && scan.title) || tab.title });
+  // A specific link is its own video: the page it sits on says nothing about it
+  const pageUrl = info.linkUrl ? '' : tab.url;
+  const result = await sendCandidates(list, { pageTitle: (scan && scan.title) || tab.title, pageUrl });
   if (result.ok) notify('Enviado a ReClip', result.title || result.candidate.url);
-  else if (result.already) notify('Ya estaba descargado', `${result.info.title || ''} (${result.already.at.slice(0, 10)}). Desde el icono puedes bajarlo otra vez.`);
+  else if (result.already) notify(alreadyText(result.already), `${result.already.title || ''}. Desde el icono puedes bajarlo otra vez.`);
   else notify('ReClip no pudo con este vídeo', result.error);
 });
 
@@ -252,7 +328,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg.type === 'scan' && sender.tab) {
     const tabId = sender.tab.id;
-    tabQueue(() => chrome.storage.session.set({ [tabKey('scan', tabId)]: msg.scan }).then(() => updateBadge(tabId)));
+    tabQueue(() => chrome.storage.session.set({ [tabKey('scan', tabId)]: msg.scan }).then(() => updateBadge(tabId)))
+      .then(() => checkSeen(tabId));
     return false;
   }
   if (msg.type === 'state') {

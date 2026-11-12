@@ -51,10 +51,14 @@ Imagen: `ghcr.io/princee11/reclip:latest` (amd64, la publica CI en cada push a `
   - El icono cuenta los vídeos de la pestaña: reproductores incrustados, `<video>`,
     `og:video` y los streams que carga la página (`.m3u8`, `.mpd`, `.mp4`, con su
     `Referer`/`Origin`/`User-Agent`, nunca cookies).
+    En **verde** si hay algo por bajar; en **naranja** si esa página o su vídeo ya
+    se descargó o se está descargando (lo consulta a ReClip al abrir la página,
+    sin yt-dlp, con `POST /api/lookup`). Sin vídeos contados pero ya bajada: ✓.
   - Al pulsarlo: «Descargar» prueba en orden reproductores, vídeos, la propia página
     y por último los streams capturados; baja el primero que ReClip sepa leer y el
     navegador guarda el fichero al terminar. Cada candidato tiene además su botón.
-    Si el vídeo ya está en el historial lo avisa y ofrece «Descargar otra vez».
+    Si la página o el vídeo ya están en el historial (o bajándose), el aviso sale
+    nada más abrirlo y el botón pasa a «Descargar otra vez».
   - Debajo, la misma lista de descargas que la web (`GET /api/jobs`) con «Guardar»
     y un enlace a ReClip para el historial completo.
   - «Enviar a ReClip» en el menú del botón derecho (enlaces, vídeos, marcos, página).
@@ -68,7 +72,10 @@ Imagen: `ghcr.io/princee11/reclip:latest` (amd64, la publica CI en cada push a `
     y el botón de recargar de la extensión.
   - Tests: `node --test extension/tests/*.test.mjs` (también en CI).
 - **Servidor para la extensión:** `GET /api/jobs` (descargas en memoria, las 200
-  últimas, más recientes primero) y campo `headers` en `/api/info` y
+  últimas, más recientes primero); `POST /api/lookup {"urls": [...]}` (hasta 50:
+  devuelve la descarga en curso o la entrada del historial que coincida, por URL
+  del vídeo o por la página desde la que se lanzó, que `/api/download` guarda en
+  `page`); y campo `headers` en `/api/info` y
   `/api/download` (solo `Referer`, `Origin`, `User-Agent`; se pasan a yt-dlp con
   `--add-header`). La web lee también `/api/jobs`: las descargas lanzadas desde la
   extensión u otra pestaña salen con «Save» (las terminadas, solo 6 h).

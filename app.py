@@ -291,7 +291,40 @@ def history_meta(data):
     duration = data.get("duration")
     if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration > 0:
         meta["duration"] = duration
+    page = data.get("page")
+    if isinstance(page, str) and len(page) <= 2000 and urlparse(page).scheme in ("http", "https"):
+        meta["page"] = page
     return meta
+
+
+def seen_before(urls):
+    """The first of these links (video or page) that is downloading or was downloaded.
+
+    Cheap (no yt-dlp): the extension asks on every page it opens.
+    """
+    keys = {history_key(u) for u in urls}
+    if not keys:
+        return None
+
+    def matches(item):
+        return any(
+            isinstance(item.get(f), str) and history_key(item[f]) in keys
+            for f in ("url", "page")
+        )
+
+    with jobs_lock:
+        for job_id, job in reversed(list(jobs.items())):
+            if job["status"] == "downloading" and matches({"url": job["url"], **job.get("meta", {})}):
+                return {**job_view(job_id, job), "status": "downloading"}
+    with history_lock:
+        history = load_history()
+    for key in keys:
+        if key in history:
+            return {**history[key], "status": "done"}
+    for entry in reversed(list(history.values())):
+        if matches(entry):
+            return {**entry, "status": "done"}
+    return None
 
 
 def history_record(url, title, format_choice, meta=None):
@@ -571,6 +604,16 @@ def get_history():
         entries = list(load_history().values())
     entries.reverse()
     return jsonify({"entries": entries[offset:offset + limit], "total": len(entries)})
+
+
+@app.route("/api/lookup", methods=["POST"])
+def lookup():
+    """Has any of these links (a page and its videos) been downloaded, or is it downloading?"""
+    urls = (request.json or {}).get("urls")
+    if not isinstance(urls, list):
+        return jsonify({"error": "urls must be a list"}), 400
+    urls = [u.strip() for u in urls[:50] if isinstance(u, str) and u.strip() and len(u) <= 4000]
+    return jsonify({"match": seen_before(urls)})
 
 
 @app.route("/api/download", methods=["POST"])

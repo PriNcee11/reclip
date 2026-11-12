@@ -66,6 +66,7 @@ button.primary:disabled { opacity: 0.6; cursor: default; }
 .msg { margin-top: 8px; padding: 7px 9px; border-radius: 6px; background: var(--card); border: 1px solid var(--card-border); }
 .msg.error { border-color: var(--error); color: var(--error); }
 .msg.ok { border-color: var(--success); color: var(--success); }
+.msg.seen { border-color: var(--accent); border-left-width: 4px; }
 .msg button { margin-top: 6px; }
 ul { list-style: none; margin: 0; padding: 0; }
 .candidates li, .jobs li {
