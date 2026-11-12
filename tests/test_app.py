@@ -261,7 +261,7 @@ def test_download_timeout(client, monkeypatch, fx):
         raise subprocess.TimeoutExpired(cmd, 300)
 
     fake_ytdlp(monkeypatch, handler)
-    assert run_job("https://example.com/v")["error"] == "Download timed out (5 min limit)"
+    assert run_job("https://example.com/v")["error"] == "Download timed out (60 min limit)"
     assert not os.listdir(reclip.DOWNLOAD_DIR)
 
 

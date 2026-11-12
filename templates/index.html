@@ -94,6 +94,8 @@
       margin-bottom: 20px;
       letter-spacing: 0.02em;
     }
+    .hint a { color: var(--accent); text-decoration: none; cursor: grab; }
+    .hint a:hover { color: var(--accent-hover); }
 
     .controls {
       display: flex;
@@ -482,7 +484,10 @@
     </div>
 
     <textarea id="urls" placeholder="Paste one or more URLs..." rows="2"></textarea>
-    <p class="hint">Multiple links? Separate with spaces, commas, or newlines.</p>
+    <p class="hint">Multiple links? Separate with spaces, commas, or newlines.<br>
+      Drag <a id="bookmarklet" href="#" title="Drag me to the bookmarks bar"
+      onclick="event.preventDefault()">Send to ReClip</a> to your bookmarks bar: on any page,
+      it sends the video players there to ReClip and downloads them.</p>
 
     <div class="controls">
       <div class="pill-group">
@@ -670,6 +675,7 @@
 
       btn.disabled = false;
       btn.textContent = 'Fetch';
+      return batch;
     }
 
     function renderCard(idx) {
@@ -1005,7 +1011,41 @@
       cardData.forEach((c, i) => { if (KINDS.todo(c)) dlCard(i); });
     }
 
+    // Bookmarklet: runs on the page being watched (which may be behind a bot check
+    // ReClip can't pass), takes the video players embedded there (big iframes, <video>)
+    // or, if there are none, the page itself, and opens ReClip with them.
+    function bookmarklet() {
+      const code = () => {
+        const found = new Set();
+        const add = u => { if (/^https?:\/\//.test(u || '')) found.add(u); };
+        document.querySelectorAll('iframe').forEach(f => {
+          const r = f.getBoundingClientRect();
+          if (r.width >= 200 && r.height >= 150) { add(f.src); add(f.dataset.src); }
+        });
+        document.querySelectorAll('video').forEach(v => add(v.currentSrc || v.src));
+        if (!found.size) found.add(location.href);
+        window.open('RECLIP_ORIGIN/?dl=1&' + [...found].map(u => 'url=' + encodeURIComponent(u)).join('&'), '_blank');
+      };
+      return 'javascript:' + encodeURIComponent('(' + code.toString().replace('RECLIP_ORIGIN', location.origin) + ')()');
+    }
+    document.getElementById('bookmarklet').href = bookmarklet();
+
+    // Links sent here as ?url=...&url=... (by the bookmarklet): fetch them, and with
+    // dl=1 also download the ones that were never downloaded before.
+    async function fetchSent() {
+      const params = new URLSearchParams(location.search);
+      const sent = params.getAll('url');
+      if (!sent.length) return;
+      history.replaceState(null, '', location.pathname);
+      document.getElementById('urls').value = sent.join(' ');
+      const batch = await go() || [];
+      if (params.get('dl') === '1') {
+        batch.forEach(i => { if (cardData[i].status === 'ready' && !cardData[i].downloaded) dlCard(i); });
+      }
+    }
+
     loadHistory();
+    fetchSent();
   </script>
 </body>
 </html>

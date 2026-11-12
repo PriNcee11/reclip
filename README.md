@@ -33,6 +33,22 @@ Imagen: `ghcr.io/princee11/reclip:latest` (amd64, la publica CI en cada push a `
   delante del MPEG-TS); el plugin parchea el descargador de fragmentos de yt-dlp para
   quitar ese PNG (solo si el fragmento empieza por PNG y detrás hay MPEG-TS). Se carga
   vía `PYTHONPATH=/app/ytdlp-plugins`. Espejos nuevos: añadirlos a `_DOMAINS`.
+- **Embeds Stream Origin (plugin de yt-dlp, desde 2026-11-12).** Reproductor
+  `video.playerrecord.cfd/e/<id>` (también `streamorigin`/`embedorigin`): el plugin
+  `embedorigin.py` pide a su API pública (`embedorigin.cc/app/v1/play/<id>`) el HLS
+  firmado, que caduca en unas horas, y marca el vídeo como «solo vídeo» para que se
+  junte con su pista de audio aparte. La API no está tras Cloudflare aunque la
+  página que incrusta el reproductor sí lo esté.
+- **Marcador «Send to ReClip».** En la página de ReClip hay un enlace para
+  arrastrar a la barra de marcadores. En cualquier web recoge los reproductores
+  incrustados (iframes de al menos 200×150, ignora banners y los `javascript:`) y
+  los `<video>`; si no hay ninguno, la propia página. Abre ReClip con
+  `/?dl=1&url=…`: la página los busca y descarga los que no estaban ya en el
+  historial, y el navegador guarda el fichero al terminar. Sirve para webs con
+  verificación anti-bots, que pasa el navegador al abrirlas, no ReClip. Sin `dl=1`
+  solo crea las tarjetas.
+- **Límite de descarga de 60 min** (antes 5), ajustable con
+  `RECLIP_DOWNLOAD_TIMEOUT` en segundos: los HLS largos pesan 1-2 GiB.
 - **Calidad elegida respetada** también en formatos que ya traen audio (HLS):
   `-f ID+bestaudio/ID/best` en vez de `ID+bestaudio/best`, que caía en "la mejor".
 - **Aviso de enlace ya descargado.** Cada descarga terminada se apunta en

@@ -49,6 +49,8 @@ YOUTUBE_RE = re.compile(
 TRACKING_PARAMS = {"si", "s", "t", "feature", "pp", "igsh", "igshid", "fbclid", "gclid",
                    "mibextid", "ref", "ref_src", "is_from_webapp", "sender_device"}
 HISTORY_MAX = 5000
+# Long HLS videos (1-2 GiB) need far more than a few minutes.
+DOWNLOAD_TIMEOUT = int(os.environ.get("RECLIP_DOWNLOAD_TIMEOUT", "3600"))
 
 jobs = {}
 history_lock = threading.Lock()
@@ -333,7 +335,7 @@ def run_download(job_id, url, format_choice, format_id):
     try:
         via_fx = bool(format_id and format_id.startswith("fx-"))
         if not via_fx:
-            result = run_ytdlp(download_args(url, out_template, format_choice, format_id), timeout=300)
+            result = run_ytdlp(download_args(url, out_template, format_choice, format_id), timeout=DOWNLOAD_TIMEOUT)
             if result.returncode != 0:
                 error = error_line(result.stderr)
                 log.warning("download failed url=%s: %s", url, error)
@@ -353,7 +355,7 @@ def run_download(job_id, url, format_choice, format_id):
                 return
             log.info("downloading via fxtwitter url=%s", url)
             # A single progressive MP4 with audio: "bestvideo+bestaudio/best" just picks it.
-            result = run_ytdlp(download_args(direct, out_template, format_choice, None), timeout=300)
+            result = run_ytdlp(download_args(direct, out_template, format_choice, None), timeout=DOWNLOAD_TIMEOUT)
             if result.returncode != 0:
                 job["status"] = "error"
                 job["error"] = error_line(result.stderr)
@@ -393,7 +395,7 @@ def run_download(job_id, url, format_choice, format_id):
         history_record(url, title, format_choice, job.get("meta"))
     except subprocess.TimeoutExpired:
         job["status"] = "error"
-        job["error"] = "Download timed out (5 min limit)"
+        job["error"] = f"Download timed out ({DOWNLOAD_TIMEOUT // 60} min limit)"
     except Exception as e:
         job["status"] = "error"
         job["error"] = str(e)
