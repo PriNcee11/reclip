@@ -84,8 +84,24 @@
     return clean.slice(0, 150) || fallback;
   }
 
+  /** "45% · 3.2 MB/s · 2:10" from a job's progress (null: nothing to show yet). */
+  function progressText(p) {
+    if (!p) return '';
+    const out = [];
+    if (p.percent != null) out.push(`${Math.floor(p.percent)}%`);
+    if (p.part > 1) out.push(`parte ${p.part}`);
+    if (p.speed) out.push(p.speed >= 1048576 ? `${(p.speed / 1048576).toFixed(1)} MB/s` : `${Math.round(p.speed / 1024)} KB/s`);
+    if (p.eta != null && p.percent != null && p.percent < 100) {
+      const m = Math.floor(p.eta / 60);
+      out.push(m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}` : `${m}:${String(p.eta % 60).padStart(2, '0')}`);
+    }
+    if (!out.length && p.bytes) out.push(`${(p.bytes / 1048576).toFixed(0)} MB`);
+    return out.join(' · ');
+  }
+
   globalThis.ReclipShared = {
     DEFAULT_SERVER, DEFAULT_ALT_SERVER, KIND_LABELS,
     isHttp, isPlayerFrame, classifyRequest, pickHeaders, rankStreams, buildCandidates, videoCount, safeFilename,
+    progressText,
   };
 })();

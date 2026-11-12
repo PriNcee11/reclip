@@ -105,10 +105,12 @@ async function refreshJobs() {
   $('jobs').innerHTML = jobs.map((j, i) => `
     <li title="${esc(j.error || j.url)}">
       <span class="thumb" ${j.thumbnail ? `style="background-image:url('${esc(j.thumbnail)}')"` : ''}></span>
-      <span class="title">${esc(j.title || short(j.url))}</span>
+      <span class="title">${esc(j.title || short(j.url))}
+        ${j.status === 'downloading' && j.progress ? `<span class="bar"><i style="width:${Number(j.progress.percent) || 0}%"></i></span>` : ''}
+      </span>
       ${j.status === 'done'
         ? `<button class="small" data-j="${i}">Guardar</button>`
-        : `<span class="state ${esc(j.status)}">${esc(STATE_LABELS[j.status] || j.status)}</span>`}
+        : `<span class="state ${esc(j.status)}">${esc((j.status === 'downloading' && S.progressText(j.progress)) || STATE_LABELS[j.status] || j.status)}</span>`}
     </li>`).join('');
   $('jobs').onclick = async e => {
     const i = e.target.dataset && e.target.dataset.j;

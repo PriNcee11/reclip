@@ -59,7 +59,8 @@ Imagen: `ghcr.io/princee11/reclip:latest` (amd64, la publica CI en cada push a `
     navegador guarda el fichero al terminar. Cada candidato tiene además su botón.
     Si la página o el vídeo ya están en el historial (o bajándose), el aviso sale
     nada más abrirlo y el botón pasa a «Descargar otra vez».
-  - Debajo, la misma lista de descargas que la web (`GET /api/jobs`) con «Guardar»
+  - Debajo, la misma lista de descargas que la web (`GET /api/jobs`), con barra y
+    «45% · 3.2 MB/s · 2:10» mientras baja y «Guardar» al terminar
     y un enlace a ReClip para el historial completo.
   - «Enviar a ReClip» en el menú del botón derecho (enlaces, vídeos, marcos, página).
   - Ajustes: servidor (por defecto `http://192.168.1.21:5018`) y alternativo, que se
@@ -79,6 +80,11 @@ Imagen: `ghcr.io/princee11/reclip:latest` (amd64, la publica CI en cada push a `
   `/api/download` (solo `Referer`, `Origin`, `User-Agent`; se pasan a yt-dlp con
   `--add-header`). La web lee también `/api/jobs`: las descargas lanzadas desde la
   extensión u otra pestaña salen con «Save» (las terminadas, solo 6 h).
+- **Progreso real** (desde 2026-11-12): yt-dlp escribe una línea por actualización
+  (`--progress-template`) en un fichero temporal; un hilo lee la última cada
+  segundo y la deja en `progress` (`percent`, `speed`, `eta`, `bytes`, `part`) de
+  `/api/jobs` y `/api/status`. Vídeo y audio se bajan uno tras otro: `part` pasa a
+  2 cuando el porcentaje vuelve a empezar. La web y el popup lo pintan.
 - **Límite de descarga de 60 min** (antes 5), ajustable con
   `RECLIP_DOWNLOAD_TIMEOUT` en segundos: los HLS largos pesan 1-2 GiB.
 - **Calidad elegida respetada** también en formatos que ya traen audio (HLS):

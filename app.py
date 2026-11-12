@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import subprocess
+import tempfile
 import threading
 import urllib.error
 import urllib.request
@@ -94,16 +95,102 @@ def needs_impersonation(stderr):
     return any(hint in text for hint in IMPERSONATE_HINTS)
 
 
-def run_ytdlp(args, timeout):
-    """Run yt-dlp; if the site looks like it blocked us, retry once as a real browser."""
-    result = subprocess.run(["yt-dlp", *args], capture_output=True, text=True, timeout=timeout)
+def run_ytdlp(args, timeout, progress=None):
+    """Run yt-dlp; if the site looks like it blocked us, retry once as a real browser.
+
+    With `progress` (a file path), stdout goes there line by line instead of being
+    captured, so a watcher can read how far the download is while it runs.
+    """
+    def run(cmd):
+        if not progress:
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        with open(progress, "w", encoding="utf-8") as out:
+            return subprocess.run(
+                [*cmd[:1], *PROGRESS_ARGS, *cmd[1:]],
+                stdout=out, stderr=subprocess.PIPE, text=True, timeout=timeout,
+            )
+
+    result = run(["yt-dlp", *args])
     if result.returncode != 0 and IMPERSONATE_TARGET and needs_impersonation(result.stderr):
         log.info("retrying with --impersonate %s: %s", IMPERSONATE_TARGET, error_line(result.stderr))
-        result = subprocess.run(
-            ["yt-dlp", "--impersonate", IMPERSONATE_TARGET, *args],
-            capture_output=True, text=True, timeout=timeout,
-        )
+        result = run(["yt-dlp", "--impersonate", IMPERSONATE_TARGET, *args])
     return result
+
+
+# --- Download progress --------------------------------------------------------
+
+PROGRESS_EVERY = 1.0  # seconds between looks at the progress file
+
+# One line per update: downloaded, total, estimated total, speed, eta, fragment n/of
+PROGRESS_ARGS = [
+    "--newline", "--progress-template",
+    "download:RECLIP %(progress.downloaded_bytes)s %(progress.total_bytes)s "
+    "%(progress.total_bytes_estimate)s %(progress.speed)s %(progress.eta)s "
+    "%(progress.fragment_index)s %(progress.fragment_count)s",
+]
+
+
+def _num(value):
+    try:
+        n = float(value)
+    except ValueError:
+        return None
+    return n if n >= 0 else None
+
+
+def parse_progress(line):
+    """{percent, speed, eta} from one of our template lines, or None."""
+    parts = line.split()
+    if len(parts) != 8 or parts[0] != "RECLIP":
+        return None
+    done, total, estimate, speed, eta, frag, frags = (_num(v) for v in parts[1:])
+    percent = None
+    if done is not None and total:
+        percent = done / total * 100
+    elif frag is not None and frags:
+        percent = frag / frags * 100
+    elif done is not None and estimate:
+        percent = done / estimate * 100
+    return {
+        "percent": None if percent is None else round(min(percent, 100), 1),
+        "speed": speed,
+        "eta": None if eta is None else int(eta),
+        "bytes": done,
+    }
+
+
+def last_progress(path):
+    """The newest progress line of a yt-dlp run (reads only the file's tail)."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 4096))
+            tail = f.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+    for line in reversed(tail.splitlines()):
+        info = parse_progress(line)
+        if info:
+            return info
+    return None
+
+
+def watch_progress(job, path, stop, every=1.0):
+    """Copy the download's progress into the job until `stop` is set.
+
+    yt-dlp downloads video and audio one after the other: `part` counts the
+    streams, so the percentage starting over is not mistaken for going backwards.
+    """
+    last = None
+    while not stop.wait(every):
+        info = last_progress(path)
+        if not info:
+            continue
+        if last and last["percent"] is not None and info["percent"] is not None \
+                and info["percent"] + 20 < last["percent"]:
+            job["part"] = job.get("part", 1) + 1
+        last = info
+        job["progress"] = {**info, "part": job.get("part", 1)}
 
 
 # --- X/Twitter fallback via fxtwitter -------------------------------------
@@ -407,12 +494,30 @@ def now_iso():
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def run_watched(job, job_id, args):
+    """run_ytdlp for a download, keeping job["progress"] current while it runs."""
+    path = os.path.join(tempfile.gettempdir(), f"reclip-{job_id}.progress")
+    stop = threading.Event()
+    watcher = threading.Thread(target=watch_progress, args=(job, path, stop, PROGRESS_EVERY), daemon=True)
+    watcher.start()
+    try:
+        return run_ytdlp(args, timeout=DOWNLOAD_TIMEOUT, progress=path)
+    finally:
+        stop.set()
+        watcher.join(timeout=5)
+        job.pop("part", None)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 def _download(job, job_id, url, out_template, format_choice, format_id):
     try:
         via_fx = bool(format_id and format_id.startswith("fx-"))
         if not via_fx:
             args = download_args(url, out_template, format_choice, format_id, job.get("headers"))
-            result = run_ytdlp(args, timeout=DOWNLOAD_TIMEOUT)
+            result = run_watched(job, job_id, args)
             if result.returncode != 0:
                 error = error_line(result.stderr)
                 log.warning("download failed url=%s: %s", url, error)
@@ -432,7 +537,7 @@ def _download(job, job_id, url, out_template, format_choice, format_id):
                 return
             log.info("downloading via fxtwitter url=%s", url)
             # A single progressive MP4 with audio: "bestvideo+bestaudio/best" just picks it.
-            result = run_ytdlp(download_args(direct, out_template, format_choice, None), timeout=DOWNLOAD_TIMEOUT)
+            result = run_watched(job, job_id, download_args(direct, out_template, format_choice, None))
             if result.returncode != 0:
                 job["status"] = "error"
                 job["error"] = error_line(result.stderr)
@@ -665,6 +770,7 @@ def job_view(job_id, job):
         "finished": job.get("finished"),
         "filename": job.get("filename"),
         "error": job.get("error"),
+        "progress": job.get("progress") if job["status"] == "downloading" else None,
         **(job.get("meta") or {}),
     }
 
@@ -691,6 +797,7 @@ def check_status(job_id):
         "status": job["status"],
         "error": job.get("error"),
         "filename": job.get("filename"),
+        "progress": job.get("progress") if job["status"] == "downloading" else None,
     })
 
 

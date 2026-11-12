@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import threading
 import time
 import types
 
@@ -488,3 +489,81 @@ def test_lookup_ignores_junk(client):
 def test_history_meta_keeps_only_http_pages():
     assert reclip.history_meta({"page": "https://a.example/p"}) == {"page": "https://a.example/p"}
     assert reclip.history_meta({"page": "javascript:alert(1)"}) == {}
+
+
+# --- download progress ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("line,expected", [
+    ("RECLIP 500 1000 NA 2048.5 12 NA NA", {"percent": 50.0, "speed": 2048.5, "eta": 12, "bytes": 500.0}),
+    ("RECLIP 300 NA 1200 NA NA 3 12", {"percent": 25.0, "speed": None, "eta": None, "bytes": 300.0}),
+    ("RECLIP 300 NA 600 NA NA NA NA", {"percent": 50.0, "speed": None, "eta": None, "bytes": 300.0}),
+    ("RECLIP 5 NA NA NA NA NA NA", {"percent": None, "speed": None, "eta": None, "bytes": 5.0}),
+    ("RECLIP 2000 1000 NA NA 0 NA NA", {"percent": 100, "speed": None, "eta": 0, "bytes": 2000.0}),
+])
+def test_parse_progress(line, expected):
+    assert reclip.parse_progress(line) == expected
+
+
+@pytest.mark.parametrize("line", ["", "[download] 50%", "RECLIP 1 2 3", "RECLIP a b c d e f g"])
+def test_parse_progress_ignores_other_lines(line):
+    info = reclip.parse_progress(line)
+    assert info is None or info["percent"] is None
+
+
+def test_last_progress_reads_newest_line(tmp_path):
+    path = tmp_path / "p"
+    path.write_text("x\nRECLIP 1 10 NA NA NA NA NA\n[Merger] ...\nRECLIP 9 10 NA NA NA NA NA\nnoise\n")
+    assert reclip.last_progress(str(path))["percent"] == 90.0
+    assert reclip.last_progress(str(tmp_path / "missing")) is None
+
+
+def test_watch_progress_counts_parts(tmp_path):
+    path = tmp_path / "p"
+    job, stop = {}, threading.Event()
+    watcher = threading.Thread(target=reclip.watch_progress, args=(job, str(path), stop, 0.01))
+    watcher.start()
+    for line in ("RECLIP 9 10 NA NA NA NA NA", "RECLIP 1 10 NA NA NA NA NA"):
+        path.write_text(line + "\n")
+        for _ in range(100):
+            if job.get("progress", {}).get("bytes") == float(line.split()[1]):
+                break
+            time.sleep(0.01)
+    stop.set()
+    watcher.join()
+    assert job["progress"]["percent"] == 10.0 and job["progress"]["part"] == 2
+
+
+def test_download_reports_progress_while_running(client, monkeypatch):
+    seen = {}
+
+    def handler(cmd):
+        assert "--progress-template" in cmd and cmd[0] == "yt-dlp"
+        progress_file = handler.stdout
+        progress_file.write("RECLIP 50 100 NA 1000 5 NA NA\n")
+        progress_file.flush()
+        for _ in range(200):
+            seen.update(client.get("/api/jobs").json["jobs"][0])
+            if seen.get("progress"):
+                break
+            time.sleep(0.01)
+        out = cmd[cmd.index("-o") + 1]
+        with open(out.replace("%(ext)s", "mp4"), "w") as f:
+            f.write("x")
+        return Proc(0)
+
+    def run(cmd, **kwargs):
+        handler.stdout = kwargs.get("stdout")
+        return handler(cmd)
+
+    monkeypatch.setattr(reclip.subprocess, "run", run)
+    monkeypatch.setattr(reclip, "PROGRESS_EVERY", 0.01)
+    res = client.post("/api/download", json={"url": "https://example.com/v"})
+    job_id = res.json["job_id"]
+    for _ in range(300):
+        if reclip.jobs[job_id]["status"] != "downloading":
+            break
+        time.sleep(0.02)
+    assert seen["progress"]["percent"] == 50.0
+    assert reclip.jobs[job_id]["status"] == "done"
+    assert client.get("/api/jobs").json["jobs"][0]["progress"] is None

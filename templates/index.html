@@ -766,7 +766,7 @@
         actionHtml = `<button class="card-dl-btn" onclick="unqueueCard(${idx})">Remove</button>
           <span class="card-status">Queued #${queuePosition(idx)}</span>`;
       } else if (c.status === 'downloading') {
-        actionHtml = `<span class="card-status downloading"><span class="spin"></span> Downloading...</span>`;
+        actionHtml = `<span class="card-status downloading"><span class="spin"></span> <span class="prog">${esc(progressText(c.progress) || 'Downloading...')}</span></span>`;
       } else if (c.status === 'done') {
         actionHtml = `<button class="card-dl-btn done" onclick="saveCard(${idx})">Save</button>
           <span class="card-status done">${esc(c.filename || '')}</span>`;
@@ -981,6 +981,21 @@
       }
     }
 
+    // "45% · 3.2 MB/s · 2:10" (same as the extension's popup)
+    function progressText(p) {
+      if (!p) return '';
+      const out = [];
+      if (p.percent != null) out.push(`${Math.floor(p.percent)}%`);
+      if (p.part > 1) out.push(`part ${p.part}`);
+      if (p.speed) out.push(p.speed >= 1048576 ? `${(p.speed / 1048576).toFixed(1)} MB/s` : `${Math.round(p.speed / 1024)} KB/s`);
+      if (p.eta != null && p.percent != null && p.percent < 100) {
+        const m = Math.floor(p.eta / 60);
+        out.push(m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}` : `${m}:${String(p.eta % 60).padStart(2, '0')}`);
+      }
+      if (!out.length && p.bytes) out.push(`${(p.bytes / 1048576).toFixed(0)} MB`);
+      return out.join(' · ');
+    }
+
     function pollCard(idx) {
       const c = cardData[idx];
       const iv = setInterval(async () => {
@@ -995,6 +1010,10 @@
           } else if (data.status === 'error') {
             clearInterval(iv);
             finishCard(idx, 'error', { error: data.error });
+          } else if (data.progress) {
+            c.progress = data.progress;
+            const el = document.querySelector(`#card-${idx} .prog`);
+            if (el) el.textContent = progressText(c.progress) || 'Downloading...';
           }
         } catch {
           clearInterval(iv);
