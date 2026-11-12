@@ -950,6 +950,7 @@
       c.status = 'downloading';
       renderCard(idx);
 
+      startsInFlight++;
       try {
         const res = await fetch('/api/download', {
           method: 'POST',
@@ -962,6 +963,8 @@
             thumbnail: c.thumbnail || '',
             uploader: c.uploader || '',
             duration: c.duration,
+            headers: c.headers || {},
+            source: 'web',
           }),
         });
         const data = await res.json();
@@ -973,6 +976,8 @@
         pollCard(idx);
       } catch (err) {
         finishCard(idx, 'error', { error: err.message });
+      } finally {
+        startsInFlight--;
       }
     }
 
@@ -985,7 +990,8 @@
           if (data.status === 'done') {
             clearInterval(iv);
             finishCard(idx, 'done', { filename: data.filename });
-            saveCard(idx);
+            // Only this tab's own downloads are saved by themselves
+            if (!c.remote) saveCard(idx);
           } else if (data.status === 'error') {
             clearInterval(iv);
             finishCard(idx, 'error', { error: data.error });
@@ -1044,8 +1050,49 @@
       }
     }
 
+    // --- downloads started elsewhere (the browser extension, another tab) ---
+    // The server keeps the list; they show up here too, with a Save button instead
+    // of saving themselves. Finished ones only while recent: older ones are history.
+    const RECENT_MS = 6 * 3600 * 1000;
+    let startsInFlight = 0;
+
+    async function syncJobs() {
+      if (startsInFlight) return;  // a job of ours may not have its id on the card yet
+      try {
+        const res = await fetch('/api/jobs');
+        const data = await res.json();
+        if (startsInFlight) return;
+        const known = new Set(cardData.map(c => c.jobId).filter(Boolean));
+        // Oldest first, so that the newest ends up on top
+        for (const j of (data.jobs || []).slice().reverse()) {
+          if (known.has(j.id)) continue;
+          const ended = j.finished ? Date.parse(j.finished) : NaN;
+          if (j.status !== 'downloading' && !(Date.now() - ended < RECENT_MS)) continue;
+          const idx = cardData.length;
+          cardData.push({
+            url: j.url,
+            status: j.status === 'downloading' ? 'downloading' : j.status === 'done' ? 'done' : 'error',
+            remote: true,
+            jobId: j.id,
+            title: j.title || '',
+            thumbnail: j.thumbnail || '',
+            uploader: j.uploader || '',
+            duration: j.duration,
+            filename: j.filename,
+            error: j.error,
+            format: j.format,
+            headers: j.headers || {},
+          });
+          renderCard(idx);
+          if (j.status === 'downloading') pollCard(idx);
+        }
+      } catch {}
+    }
+
     loadHistory();
     fetchSent();
+    syncJobs();
+    setInterval(() => { if (!document.hidden) syncJobs(); }, 5000);
   </script>
 </body>
 </html>

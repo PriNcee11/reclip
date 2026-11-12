@@ -47,6 +47,31 @@ Imagen: `ghcr.io/princee11/reclip:latest` (amd64, la publica CI en cada push a `
   historial, y el navegador guarda el fichero al terminar. Sirve para webs con
   verificación anti-bots, que pasa el navegador al abrirlas, no ReClip. Sin `dl=1`
   solo crea las tarjetas.
+- **Extensión de Chrome** (`extension/`, desde 2026-11-12). Sustituye al marcador:
+  - El icono cuenta los vídeos de la pestaña: reproductores incrustados, `<video>`,
+    `og:video` y los streams que carga la página (`.m3u8`, `.mpd`, `.mp4`, con su
+    `Referer`/`Origin`/`User-Agent`, nunca cookies).
+  - Al pulsarlo: «Descargar» prueba en orden reproductores, vídeos, la propia página
+    y por último los streams capturados; baja el primero que ReClip sepa leer y el
+    navegador guarda el fichero al terminar. Cada candidato tiene además su botón.
+    Si el vídeo ya está en el historial lo avisa y ofrece «Descargar otra vez».
+  - Debajo, la misma lista de descargas que la web (`GET /api/jobs`) con «Guardar»
+    y un enlace a ReClip para el historial completo.
+  - «Enviar a ReClip» en el menú del botón derecho (enlaces, vídeos, marcos, página).
+  - Ajustes: servidor (por defecto `http://192.168.1.21:5018`) y alternativo, que se
+    usa si el principal no responde (por defecto el i7 por Tailscale).
+  - Permisos: acceso a todos los sitios (para ver las peticiones de vídeo),
+    `webRequest`, `downloads`, `notifications`, `contextMenus`, `scripting`,
+    `storage`, `alarms` y `tabs`. Solo habla con el servidor de ReClip configurado.
+  - Instalar: `chrome://extensions` → «Modo de desarrollador» → «Cargar
+    descomprimida» → la carpeta `extension/` de este repo. Actualizar: `git pull`
+    y el botón de recargar de la extensión.
+  - Tests: `node --test extension/tests/*.test.mjs` (también en CI).
+- **Servidor para la extensión:** `GET /api/jobs` (descargas en memoria, las 200
+  últimas, más recientes primero) y campo `headers` en `/api/info` y
+  `/api/download` (solo `Referer`, `Origin`, `User-Agent`; se pasan a yt-dlp con
+  `--add-header`). La web lee también `/api/jobs`: las descargas lanzadas desde la
+  extensión u otra pestaña salen con «Save» (las terminadas, solo 6 h).
 - **Límite de descarga de 60 min** (antes 5), ajustable con
   `RECLIP_DOWNLOAD_TIMEOUT` en segundos: los HLS largos pesan 1-2 GiB.
 - **Calidad elegida respetada** también en formatos que ya traen audio (HLS):

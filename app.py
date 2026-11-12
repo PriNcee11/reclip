@@ -52,7 +52,15 @@ HISTORY_MAX = 5000
 # Long HLS videos (1-2 GiB) need far more than a few minutes.
 DOWNLOAD_TIMEOUT = int(os.environ.get("RECLIP_DOWNLOAD_TIMEOUT", "3600"))
 
+# Jobs live in memory (lost on restart); the oldest finished ones go past this many.
+JOBS_MAX = 200
+# Request headers a client (the browser extension) may pass for a captured stream:
+# the CDN often wants the player's Referer/Origin. Never cookies: they would carry
+# the browser's sessions to the server.
+FORWARDED_HEADERS = {"referer": "Referer", "origin": "Origin", "user-agent": "User-Agent"}
+
 jobs = {}
+jobs_lock = threading.Lock()
 history_lock = threading.Lock()
 
 
@@ -291,7 +299,7 @@ def history_record(url, title, format_choice, meta=None):
         "url": url,
         "title": title,
         "format": format_choice,
-        "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "at": now_iso(),
         **(meta or {}),
     }
     key = history_key(url)
@@ -314,8 +322,33 @@ def history_record(url, title, format_choice, meta=None):
 # --- Downloads -------------------------------------------------------------
 
 
-def download_args(url, out_template, format_choice, format_id):
-    args = ["--no-playlist", "-o", out_template]
+def clean_headers(raw):
+    """Only the forwardable headers, well-formed; anything else is dropped silently."""
+    headers = {}
+    if not isinstance(raw, dict):
+        return headers
+    for key, value in raw.items():
+        name = FORWARDED_HEADERS.get(str(key).lower())
+        if not name or not isinstance(value, str):
+            continue
+        value = value.strip()
+        if not value or len(value) > 1000 or any(c in value for c in "\r\n\0"):
+            continue
+        if name in ("Referer", "Origin") and urlparse(value).scheme not in ("http", "https"):
+            continue
+        headers[name] = value
+    return headers
+
+
+def header_args(headers):
+    args = []
+    for name, value in (headers or {}).items():
+        args += ["--add-header", f"{name}:{value}"]
+    return args
+
+
+def download_args(url, out_template, format_choice, format_id, headers=None):
+    args = ["--no-playlist", *header_args(headers), "-o", out_template]
     if format_choice == "audio":
         args += ["-x", "--audio-format", "mp3"]
     elif format_id:
@@ -331,11 +364,22 @@ def download_args(url, out_template, format_choice, format_id):
 def run_download(job_id, url, format_choice, format_id):
     job = jobs[job_id]
     out_template = os.path.join(DOWNLOAD_DIR, f"{job_id}.%(ext)s")
+    try:
+        _download(job, job_id, url, out_template, format_choice, format_id)
+    finally:
+        job["finished"] = now_iso()
 
+
+def now_iso():
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _download(job, job_id, url, out_template, format_choice, format_id):
     try:
         via_fx = bool(format_id and format_id.startswith("fx-"))
         if not via_fx:
-            result = run_ytdlp(download_args(url, out_template, format_choice, format_id), timeout=DOWNLOAD_TIMEOUT)
+            args = download_args(url, out_template, format_choice, format_id, job.get("headers"))
+            result = run_ytdlp(args, timeout=DOWNLOAD_TIMEOUT)
             if result.returncode != 0:
                 error = error_line(result.stderr)
                 log.warning("download failed url=%s: %s", url, error)
@@ -413,8 +457,9 @@ def get_info():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
 
+    headers = clean_headers(data.get("headers"))
     try:
-        result = run_ytdlp(["--no-playlist", "-j", url], timeout=60)
+        result = run_ytdlp(["--no-playlist", *header_args(headers), "-j", url], timeout=60)
         if result.returncode != 0:
             error = error_line(result.stderr)
             log.warning("info failed url=%s: %s", url, error)
@@ -540,13 +585,58 @@ def start_download():
         return jsonify({"error": "No URL provided"}), 400
 
     job_id = uuid.uuid4().hex[:10]
-    jobs[job_id] = {"status": "downloading", "url": url, "title": title, "meta": history_meta(data)}
+    with jobs_lock:
+        jobs[job_id] = {
+            "status": "downloading", "url": url, "title": title, "meta": history_meta(data),
+            "format": "audio" if format_choice == "audio" else "video",
+            "headers": clean_headers(data.get("headers")),
+            "source": str(data.get("source") or "web")[:20],
+            "created": now_iso(),
+        }
+        prune_jobs()
 
     thread = threading.Thread(target=run_download, args=(job_id, url, format_choice, format_id))
     thread.daemon = True
     thread.start()
 
     return jsonify({"job_id": job_id})
+
+
+def prune_jobs():
+    """Forget the oldest finished jobs past JOBS_MAX (call with jobs_lock held)."""
+    finished = [k for k, j in jobs.items() if j["status"] != "downloading"]
+    for key in finished[:max(0, len(jobs) - JOBS_MAX)]:
+        del jobs[key]
+
+
+def job_view(job_id, job):
+    return {
+        "id": job_id,
+        "status": job["status"],
+        "url": job["url"],
+        "title": job.get("title", ""),
+        "format": job.get("format", "video"),
+        "headers": job.get("headers") or {},
+        "source": job.get("source", "web"),
+        "created": job.get("created"),
+        "finished": job.get("finished"),
+        "filename": job.get("filename"),
+        "error": job.get("error"),
+        **(job.get("meta") or {}),
+    }
+
+
+@app.route("/api/jobs")
+def list_jobs():
+    """This server's downloads (in progress and recent), newest first."""
+    try:
+        limit = max(1, min(int(request.args.get("limit", 50)), JOBS_MAX))
+    except ValueError:
+        return jsonify({"error": "limit must be a number"}), 400
+    with jobs_lock:
+        items = [job_view(k, j) for k, j in jobs.items()]
+    items.reverse()
+    return jsonify({"jobs": items[:limit]})
 
 
 @app.route("/api/status/<job_id>")

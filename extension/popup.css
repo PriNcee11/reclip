@@ -1,0 +1,123 @@
+/* Same tokens as the ReClip page (templates/index.html) */
+:root {
+  --bg: #f4f1eb;
+  --fg: #3a3a38;
+  --accent: #e85d2a;
+  --accent-hover: #d04e1f;
+  --muted: #9c9889;
+  --card: #fff;
+  --card-border: #e2ded6;
+  --success: #2d8a4e;
+  --error: #c43d3d;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  width: 380px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 12px/1.4 'DM Mono', ui-monospace, monospace;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px 8px;
+}
+.brand {
+  font: 24px 'Instrument Serif', Georgia, serif;
+  color: var(--fg);
+  text-decoration: none;
+  margin-right: auto;
+}
+.brand em { color: var(--accent); }
+.pills { display: flex; border: 1px solid var(--card-border); border-radius: 6px; overflow: hidden; }
+.pill {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 600 11px 'DM Mono', ui-monospace, monospace;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+.pill.active { background: var(--fg); color: var(--bg); }
+.icon-btn { color: var(--muted); text-decoration: none; font-size: 16px; }
+.icon-btn:hover { color: var(--fg); }
+section { padding: 6px 14px 10px; }
+h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 4px 0 6px;
+}
+button.primary {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font: 600 13px 'DM Mono', ui-monospace, monospace;
+  padding: 9px;
+  cursor: pointer;
+}
+button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+button.primary:disabled { opacity: 0.6; cursor: default; }
+.msg { margin-top: 8px; padding: 7px 9px; border-radius: 6px; background: var(--card); border: 1px solid var(--card-border); }
+.msg.error { border-color: var(--error); color: var(--error); }
+.msg.ok { border-color: var(--success); color: var(--success); }
+.msg button { margin-top: 6px; }
+ul { list-style: none; margin: 0; padding: 0; }
+.candidates li, .jobs li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--card-border);
+}
+.candidates { margin-top: 6px; }
+.kind {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--muted);
+  width: 74px;
+}
+.url, .title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.small {
+  flex: none;
+  border: 1px solid var(--card-border);
+  background: var(--card);
+  color: var(--fg);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font: 600 11px 'DM Mono', ui-monospace, monospace;
+  cursor: pointer;
+}
+.small:hover { border-color: var(--accent); color: var(--accent); }
+.thumb {
+  flex: none;
+  width: 48px;
+  height: 27px;
+  border-radius: 4px;
+  background: var(--card-border) center / cover no-repeat;
+}
+.state { flex: none; font-size: 11px; color: var(--muted); }
+.state.done { color: var(--success); }
+.state.error { color: var(--error); }
+.empty { color: var(--muted); justify-content: center; }
+.more {
+  display: block;
+  margin-top: 8px;
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 12px;
+}
+.more:hover { color: var(--accent-hover); }

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>ReClip · Ajustes</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css">
+  <style>
+    body { width: auto; max-width: 560px; margin: 24px auto; padding: 0 16px; }
+    label { display: block; margin: 14px 0 4px; font-weight: 600; }
+    input { width: 100%; padding: 7px 9px; border: 1px solid var(--card-border); border-radius: 6px; font: inherit; background: var(--card); color: var(--fg); }
+    p.help { color: var(--muted); margin: 4px 0 0; }
+    .row { display: flex; gap: 8px; margin-top: 18px; align-items: center; }
+    .row button { width: auto; padding: 8px 16px; }
+  </style>
+</head>
+<body>
+  <div class="brand">Re<em>Clip</em> · ajustes</div>
+
+  <label for="server">Servidor</label>
+  <input id="server" type="url" placeholder="http://192.168.1.21:5018">
+  <p class="help">Dirección de tu ReClip.</p>
+
+  <label for="altServer">Servidor alternativo</label>
+  <input id="altServer" type="url" placeholder="http://100.98.169.38:5018">
+  <p class="help">Se usa cuando el principal no responde (por ejemplo, fuera de casa por Tailscale). Vacío para no usar ninguno.</p>
+
+  <div class="row">
+    <button id="save" class="primary">Guardar</button>
+    <span id="status" class="state"></span>
+  </div>
+
+  <script src="shared.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

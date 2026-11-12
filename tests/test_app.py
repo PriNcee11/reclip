@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import time
+import types
 
 import pytest
 
@@ -369,3 +370,77 @@ def test_download_keeps_card_details_in_history(client, monkeypatch, fx):
 ])
 def test_history_meta_drops_bad_values(data):
     assert reclip.history_meta(data) == {}
+
+
+# --- forwarded headers and the shared job list --------------------------------
+
+
+def test_clean_headers_keeps_only_safe_ones():
+    raw = {"referer": "https://player.example/", "Origin": "https://player.example",
+           "User-Agent": "Mozilla/5.0", "Cookie": "session=1", "Referer2": "x",
+           "X-Evil": "1"}
+    assert reclip.clean_headers(raw) == {"Referer": "https://player.example/",
+                                         "Origin": "https://player.example",
+                                         "User-Agent": "Mozilla/5.0"}
+
+
+@pytest.mark.parametrize("raw", [
+    None, "Referer: x", {"Referer": "javascript:alert(1)"}, {"Referer": "https://a/\r\nX: y"},
+    {"Referer": 3}, {"User-Agent": "a" * 2000}, {"Origin": "  "},
+])
+def test_clean_headers_drops_bad_values(raw):
+    assert reclip.clean_headers(raw) == {}
+
+
+def test_info_passes_headers_to_ytdlp(client, monkeypatch):
+    calls = fake_ytdlp(monkeypatch, lambda cmd: Proc(0, json.dumps({"title": "s", "formats": []})))
+    res = client.post("/api/info", json={"url": "https://cdn.example/master.m3u8",
+                                         "headers": {"Referer": "https://p.example/", "Cookie": "c"}})
+    assert res.status_code == 200
+    cmd = calls[0]
+    assert cmd[cmd.index("--add-header") + 1] == "Referer:https://p.example/"
+    assert not any("Cookie" in part for part in cmd)
+    assert cmd[-1] == "https://cdn.example/master.m3u8"
+
+
+def test_download_job_uses_its_headers(client, monkeypatch):
+    calls = fake_ytdlp(monkeypatch, writes_file("mp4"))
+    reclip.jobs["j1"] = {"status": "downloading", "url": "https://cdn.example/v.m3u8", "title": "t",
+                         "headers": {"Referer": "https://p.example/"}}
+    reclip.run_download("j1", "https://cdn.example/v.m3u8", "video", None)
+    job = reclip.jobs["j1"]
+    assert job["status"] == "done" and job["finished"]
+    assert calls[0][calls[0].index("--add-header") + 1] == "Referer:https://p.example/"
+
+
+def test_jobs_list_newest_first_with_details(client, monkeypatch):
+    def no_thread(target, args, daemon=None):
+        return types.SimpleNamespace(start=lambda: None)
+
+    monkeypatch.setattr(reclip.threading, "Thread", no_thread)
+    for n in (1, 2):
+        res = client.post("/api/download", json={
+            "url": f"https://v.example/{n}", "title": f"v{n}", "format": "audio" if n == 2 else "video",
+            "thumbnail": "https://img.example/t.jpg", "duration": 12, "source": "extension",
+            "headers": {"Referer": "https://p.example/", "Cookie": "no"}})
+        assert res.status_code == 200
+    jobs = client.get("/api/jobs").get_json()["jobs"]
+    assert [j["title"] for j in jobs] == ["v2", "v1"]
+    first = jobs[0]
+    assert first["status"] == "downloading" and first["format"] == "audio"
+    assert first["source"] == "extension" and first["headers"] == {"Referer": "https://p.example/"}
+    assert first["thumbnail"] == "https://img.example/t.jpg" and first["duration"] == 12
+    assert first["created"] and first["id"]
+    assert client.get("/api/jobs?limit=1").get_json()["jobs"][0]["title"] == "v2"
+    assert client.get("/api/jobs?limit=x").status_code == 400
+
+
+def test_prune_jobs_keeps_running_ones(client, monkeypatch):
+    monkeypatch.setattr(reclip, "JOBS_MAX", 3)
+    reclip.jobs.update({
+        "a": {"status": "done", "url": "a"}, "b": {"status": "downloading", "url": "b"},
+        "c": {"status": "error", "url": "c"}, "d": {"status": "done", "url": "d"},
+        "e": {"status": "done", "url": "e"},
+    })
+    reclip.prune_jobs()
+    assert list(reclip.jobs) == ["b", "d", "e"]

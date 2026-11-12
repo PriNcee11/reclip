@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>ReClip</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <a id="open" class="brand" href="#" title="Abrir ReClip">Re<em>Clip</em></a>
+    <div class="pills">
+      <button class="pill active" data-format="video">MP4</button>
+      <button class="pill" data-format="audio">MP3</button>
+    </div>
+    <a id="settings" class="icon-btn" href="#" title="Ajustes">⚙</a>
+  </header>
+
+  <section>
+    <button id="go" class="primary" disabled>Buscando vídeos…</button>
+    <div id="msg" class="msg" hidden></div>
+    <ul id="candidates" class="candidates"></ul>
+  </section>
+
+  <section>
+    <h2>Descargas</h2>
+    <ul id="jobs" class="jobs"><li class="empty">Cargando…</li></ul>
+    <a id="history" class="more" href="#">Ver todo el historial en ReClip →</a>
+  </section>
+
+  <script src="shared.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

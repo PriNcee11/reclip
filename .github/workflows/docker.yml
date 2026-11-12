@@ -23,6 +23,8 @@ jobs:
         run: ruff check .
       - name: Run tests
         run: python -m pytest
+      - name: Extension tests
+        run: node --test extension/tests/*.test.mjs
 
   build:
     needs: test
