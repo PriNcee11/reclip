@@ -26,27 +26,55 @@ function alreadyHtml(m) {
   return `${when}: <b>${esc(m.title || short(m.url))}</b>`;
 }
 
+const GO_LABELS = { idle: 'Descargar', again: 'Descargar otra vez' };
+let watching = null; // id of the job the button is following
+
+function setGo(mode, text) {
+  const go = $('go');
+  go.className = `primary ${mode}`;
+  go.disabled = mode === 'loading' || mode === 'done' || mode === 'none';
+  go.innerHTML = mode === 'loading' ? `<span class="spin"></span>${esc(text || 'Descargando…')}`
+    : mode === 'done' ? `<span class="tick">✓</span>Descargado` : esc(text);
+}
+
+const fmtDuration = s => {
+  s = Math.round(Number(s) || 0);
+  if (!s) return '';
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+};
+
+function renderPreview(info) {
+  const box = $('preview');
+  if (!info || !info.title) { box.hidden = true; return; }
+  const meta = [info.uploader, fmtDuration(info.duration)].filter(Boolean).map(esc).join(' · ');
+  box.hidden = false;
+  box.innerHTML = `
+    ${info.thumbnail ? `<span class="shot" style="background-image:url('${esc(info.thumbnail)}')">${info.duration ? `<b>${esc(fmtDuration(info.duration))}</b>` : ''}</span>` : ''}
+    <span class="ptitle">${esc(info.title)}</span>
+    ${meta ? `<span class="pmeta">${meta}</span>` : ''}`;
+}
+
 function renderCandidates() {
   const list = state.candidates;
-  const found = list.filter(c => c.kind !== 'page').length;
-  const go = $('go');
-  go.disabled = !list.length;
-  go.textContent = found ? `Descargar vídeo de esta página (${found})` : list.length ? 'Descargar esta página' : 'Nada que descargar aquí';
-  if (state.seen && list.length) {
-    go.textContent = 'Descargar otra vez';
+  if (watching) return;
+  if (!list.length) { setGo('none', 'Nada que descargar aquí'); return; }
+  if (state.seen) {
+    setGo('again', GO_LABELS.again);
     showMsg('seen', alreadyHtml(state.seen));
+  } else {
+    setGo('idle', GO_LABELS.idle);
   }
-  $('candidates').innerHTML = list.map((c, i) => `
-    <li title="${esc(c.url)}">
-      <span class="kind">${esc(S.KIND_LABELS[c.kind] || c.kind)}${c.type ? ' ' + esc(c.type.toUpperCase()) : ''}</span>
-      <span class="url">${esc(short(c.url))}</span>
-      <button class="small" data-i="${i}">↓</button>
-    </li>`).join('');
+}
+
+async function loadPreview() {
+  if (!state.candidates.length || !tab) return;
+  renderPreview(await send({ type: 'preview', tabId: tab.id, candidates: state.candidates }));
 }
 
 async function download(candidates, force) {
-  $('go').disabled = true;
-  showMsg('', 'Preguntando a ReClip…');
+  setGo('loading', 'Preguntando…');
+  $('msg').hidden = true;
   const result = await send({
     type: 'send',
     candidates,
@@ -56,26 +84,38 @@ async function download(candidates, force) {
       pageUrl: (tab && tab.url) || '',
     },
   });
-  $('go').disabled = false;
   if (result.ok) {
-    showMsg('ok', `Descargando <b>${esc(result.title || short(result.candidate.url))}</b>. Se guardará solo al terminar.`);
+    watching = result.jobId;
+    setGo('loading', 'Descargando…');
   } else if (result.already) {
     state.seen = result.already;
-    showMsg('seen', `${alreadyHtml(result.already)}<br>
-      <button class="small" id="again">Descargar otra vez</button>`);
-    $('again').onclick = () => download(state.candidates, true);
+    renderCandidates();
   } else {
+    setGo('again', 'Reintentar');
     showMsg('error', esc(result.error || 'No se pudo'));
   }
   refreshJobs();
 }
 
-// Known as downloaded: the button itself means "again" (the notice is already shown)
+// Follow the job the button started: spinner while it runs, green tick when it is done
+function followWatched(jobs) {
+  if (!watching) return;
+  const job = jobs.find(j => j.id === watching);
+  if (!job || job.status === 'error') {
+    const err = job && job.error;
+    watching = null;
+    setGo('again', 'Reintentar');
+    showMsg('error', esc(err || 'La descarga ha fallado'));
+  } else if (job.status === 'done') {
+    watching = null;
+    setGo('done');
+    $('msg').hidden = true;
+  } else {
+    setGo('loading', S.progressText(job.progress) || 'Descargando…');
+  }
+}
+
 $('go').onclick = () => download(state.candidates, Boolean(state.seen));
-$('candidates').onclick = e => {
-  const i = e.target.dataset && e.target.dataset.i;
-  if (i !== undefined) download([state.candidates[Number(i)]], true);
-};
 
 for (const pill of document.querySelectorAll('.pill')) {
   pill.onclick = () => {
@@ -86,6 +126,7 @@ for (const pill of document.querySelectorAll('.pill')) {
 
 // --- ReClip's downloads (same list as the page) ------------------------------
 
+const RECENT = 5;
 const STATE_LABELS = { downloading: 'Descargando…', done: 'Hecho', error: 'Error' };
 
 async function refreshJobs() {
@@ -98,24 +139,34 @@ async function refreshJobs() {
     return;
   }
   const jobs = data.jobs || [];
+  followWatched(jobs);
   if (!jobs.length) {
     $('jobs').innerHTML = '<li class="empty">Nada todavía</li>';
     return;
   }
-  $('jobs').innerHTML = jobs.map((j, i) => `
+  const shown = jobs.slice(0, RECENT);
+  $('jobs').innerHTML = shown.map((j, i) => `
     <li title="${esc(j.error || j.url)}">
       <span class="thumb" ${j.thumbnail ? `style="background-image:url('${esc(j.thumbnail)}')"` : ''}></span>
       <span class="title">${esc(j.title || short(j.url))}
+        <span class="sub">${j.status === 'downloading'
+          ? esc(S.progressText(j.progress) || STATE_LABELS.downloading)
+          : `<span class="state ${esc(j.status)}">${esc(STATE_LABELS[j.status] || j.status)}</span>`}${j.duration ? ' · ' + esc(fmtDuration(j.duration)) : ''}</span>
         ${j.status === 'downloading' && j.progress ? `<span class="bar"><i style="width:${Number(j.progress.percent) || 0}%"></i></span>` : ''}
       </span>
-      ${j.status === 'done'
-        ? `<button class="small" data-j="${i}">Guardar</button>`
-        : `<span class="state ${esc(j.status)}">${esc((j.status === 'downloading' && S.progressText(j.progress)) || STATE_LABELS[j.status] || j.status)}</span>`}
+      <a class="small" href="#" data-p="${i}" title="Abrir la página">↗</a>
+      ${j.status === 'done' ? `<button class="small" data-j="${i}">Guardar</button>` : ''}
     </li>`).join('');
   $('jobs').onclick = async e => {
-    const i = e.target.dataset && e.target.dataset.j;
-    if (i === undefined) return;
-    const res = await send({ type: 'save', job: jobs[Number(i)] });
+    const t = e.target.closest('[data-p],[data-j]');
+    if (!t) return;
+    e.preventDefault();
+    if (t.dataset.p !== undefined) {
+      const j = shown[Number(t.dataset.p)];
+      chrome.tabs.create({ url: S.isHttp(j.page) ? j.page : j.url });
+      return;
+    }
+    const res = await send({ type: 'save', job: shown[Number(t.dataset.j)] });
     if (!res.ok) showMsg('error', esc(res.error));
   };
 }
@@ -136,4 +187,5 @@ $('settings').onclick = e => { e.preventDefault(); chrome.runtime.openOptionsPag
     state = await send({ type: 'state', tabId: tab.id });
   }
   renderCandidates();
+  loadPreview();
 })();

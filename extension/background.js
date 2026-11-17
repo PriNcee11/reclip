@@ -79,7 +79,7 @@ async function updateBadge(tabId) {
 }
 
 async function clearTab(tabId) {
-  await chrome.storage.session.remove([tabKey('scan', tabId), tabKey('streams', tabId), tabKey('seen', tabId)]);
+  await chrome.storage.session.remove([tabKey('scan', tabId), tabKey('streams', tabId), tabKey('seen', tabId), tabKey('preview', tabId)]);
 }
 
 /** Ask ReClip (cheap, no yt-dlp) whether one of these links was downloaded or is downloading. */
@@ -203,6 +203,22 @@ async function sendCandidates(candidates, { format = 'video', pageTitle = '', pa
     return { ok: true, jobId: data.job_id, title, candidate: c };
   }
   return { ok: false, error: errors.length ? errors[errors.length - 1].error : 'No hay ningún vídeo que probar', errors };
+}
+
+/** Title, thumbnail and length of the video this tab would download (first candidate ReClip can read). Cached per tab. */
+async function previewTab(tabId, candidates) {
+  const key = JSON.stringify(candidates.map(c => c.url));
+  const old = await getTab('preview', tabId);
+  if (old && old.key === key) return old.info;
+  let info = null;
+  for (const c of candidates) {
+    try {
+      const { data } = await api('/api/info', { url: c.url, headers: c.headers || {} });
+      if (!data.error) { info = { title: data.title || '', thumbnail: data.thumbnail || '', duration: data.duration || null, uploader: data.uploader || '' }; break; }
+    } catch { return null; }
+  }
+  await chrome.storage.session.set({ [tabKey('preview', tabId)]: { key, info } });
+  return info;
 }
 
 // Jobs this extension started and still has to save: { jobId: true }
@@ -334,6 +350,10 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
   if (msg.type === 'state') {
     tabState(msg.tabId).then(reply);
+    return true;
+  }
+  if (msg.type === 'preview') {
+    previewTab(msg.tabId, msg.candidates).then(reply, () => reply(null));
     return true;
   }
   if (msg.type === 'send') {
