@@ -163,13 +163,11 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
 
 // --- downloading ---------------------------------------------------------
 
-const GENERIC_TITLES = /^(master|index|playlist|video|manifest|chunklist|embed|untitled)?$/i;
-
 /**
  * Try the candidates in order: the first one ReClip can read gets downloaded.
  * Without `force`, a page or video already downloaded (or downloading) is reported instead.
  */
-async function sendCandidates(candidates, { format = 'video', pageTitle = '', pageUrl = '', force = false } = {}) {
+async function sendCandidates(candidates, { format = 'video', pageTitle = '', clicked = '', pageUrl = '', force = false } = {}) {
   const errors = [];
   if (!force) {
     let match = null;
@@ -190,8 +188,7 @@ async function sendCandidates(candidates, { format = 'video', pageTitle = '', pa
     if (info.error) { errors.push({ candidate: c, error: info.error }); continue; }
     if (info.downloaded && !force) return { ok: false, already: { ...info.downloaded, status: 'done' }, candidate: c };
 
-    let title = (info.title || '').trim();
-    if (c.kind === 'stream' || GENERIC_TITLES.test(title)) title = pageTitle || title;
+    const title = S.pickTitle({ title: info.title, url: c.url, kind: c.kind, clicked, pageTitle });
     const { data } = await api('/api/download', {
       url: c.url, headers: c.headers || {}, format, title,
       thumbnail: info.thumbnail || '', uploader: info.uploader || '', duration: info.duration,
@@ -210,11 +207,13 @@ async function previewTab(tabId, candidates) {
   const key = JSON.stringify(candidates.map(c => c.url));
   const old = await getTab('preview', tabId);
   if (old && old.key === key) return old.info;
+  const scan = await getTab('scan', tabId);
+  const pageTitle = scan ? scan.ogTitle || scan.title : '';
   let info = null;
   for (const c of candidates) {
     try {
       const { data } = await api('/api/info', { url: c.url, headers: c.headers || {} });
-      if (!data.error) { info = { title: data.title || '', thumbnail: data.thumbnail || '', duration: data.duration || null, uploader: data.uploader || '' }; break; }
+      if (!data.error) { info = { title: S.pickTitle({ title: data.title, url: c.url, kind: c.kind, pageTitle }), thumbnail: data.thumbnail || '', duration: data.duration || null, uploader: data.uploader || '' }; break; }
     } catch { return null; }
   }
   await chrome.storage.session.set({ [tabKey('preview', tabId)]: { key, info } });
@@ -333,7 +332,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const list = first ? [{ kind: info.linkUrl ? 'page' : 'player', url: first }, ...candidates] : candidates;
   // A specific link is its own video: the page it sits on says nothing about it
   const pageUrl = info.linkUrl ? '' : tab.url;
-  const result = await sendCandidates(list, { pageTitle: (scan && scan.title) || tab.title, pageUrl });
+  const pageTitle = info.linkUrl ? '' : (scan && (scan.ogTitle || scan.title)) || tab.title;
+  const result = await sendCandidates(list, { pageTitle, clicked: (scan && scan.clicked) || '', pageUrl });
   if (result.ok) notify('Enviado a ReClip', result.title || result.candidate.url);
   else if (result.already) notify(alreadyText(result.already), `${result.already.title || ''}. Desde el icono puedes bajarlo otra vez.`);
   else notify('ReClip no pudo con este vídeo', result.error);

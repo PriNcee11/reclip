@@ -99,9 +99,53 @@
     return out.join(' · ');
   }
 
+  // Titles that say nothing about the video: playlist file names, player labels...
+  const GENERIC_TITLE = /^(master|index|playlist|video|vídeo|manifest|chunklist|embed|untitled|play|reproducir|embedded video|vídeo insertado|video player|reproductor de vídeo)?$/i;
+  const squash = s => String(s || '').replace(/\s+/g, ' ').trim();
+
+  /** The last part of a URL's path without its extension ("clip" for .../clip.mp4?x=1). */
+  function urlStem(url) {
+    try {
+      const last = decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() || '');
+      return last.replace(/\.[a-z0-9]{2,5}$/i, '');
+    } catch {
+      return '';
+    }
+  }
+
+  /** A title that names nothing: generic, the file name in the URL, or an id (one word with digits). */
+  function isWeakTitle(title, url = '') {
+    const t = squash(title);
+    if (GENERIC_TITLE.test(t)) return true;
+    if (url && t.toLowerCase() === urlStem(url).toLowerCase()) return true;
+    return !/\s/.test(t) && /\d{3,}|[0-9a-f]{8}-[0-9a-f]{4}/i.test(t);
+  }
+
+  /** The page's title without the unread counter and the site's name; '' for a section ("Inicio / X"). */
+  function cleanPageTitle(title) {
+    let t = squash(title).replace(/^\(\d+\+?\)\s*/, '');
+    const m = t.match(/^(.+?)\s+[|/–—-]\s+([^|/–—-]{1,30})$/);
+    if (m) t = m[1].trim();
+    // One word is a part of the site (Inicio, Home, Explore), not a video
+    return /\s/.test(t) ? t : '';
+  }
+
+  /**
+   * The name for a download: yt-dlp's title, unless it names nothing or the video is a
+   * captured stream; then what was right-clicked (the post, the link), then the page.
+   */
+  function pickTitle({ title, url, kind, clicked, pageTitle }) {
+    const own = squash(title);
+    if (own && kind !== 'stream' && !isWeakTitle(own, url)) return own;
+    for (const t of [squash(clicked), cleanPageTitle(pageTitle)]) {
+      if (t && !isWeakTitle(t)) return t.slice(0, 200);
+    }
+    return own;
+  }
+
   globalThis.ReclipShared = {
     DEFAULT_SERVER, DEFAULT_ALT_SERVER, KIND_LABELS,
     isHttp, isPlayerFrame, classifyRequest, pickHeaders, rankStreams, buildCandidates, videoCount, safeFilename,
-    progressText,
+    progressText, isWeakTitle, cleanPageTitle, pickTitle,
   };
 })();

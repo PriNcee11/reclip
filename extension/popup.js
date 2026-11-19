@@ -80,7 +80,7 @@ async function download(candidates, force) {
     candidates,
     options: {
       format, force,
-      pageTitle: (state.scan && state.scan.title) || (tab && tab.title) || '',
+      pageTitle: (state.scan && (state.scan.ogTitle || state.scan.title)) || (tab && tab.title) || '',
       pageUrl: (tab && tab.url) || '',
     },
   });

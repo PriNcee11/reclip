@@ -72,3 +72,33 @@ test('file names', () => {
   assert.equal(S.safeFilename('', 'x.mp4'), 'x.mp4');
   assert.equal(S.safeFilename('...hidden.mp4', 'x.mp4'), 'hidden.mp4');
 });
+
+test('weak titles: generic names, file names from the URL and ids', () => {
+  const cdn = 'https://cdn.example/content6/u/compressed_watermark_16778_u_83750994106.mp4';
+  assert.ok(S.isWeakTitle('compressed_watermark_16778_u_83750994106', cdn));
+  assert.ok(S.isWeakTitle('e41da2c0-78f0-48d6-b285-5207b48250ae_1000179536'));
+  assert.ok(S.isWeakTitle('clip', 'https://cdn.example/v/clip.mp4?token=1'));
+  assert.ok(S.isWeakTitle('master'));
+  assert.ok(S.isWeakTitle('Embedded video'));
+  assert.ok(S.isWeakTitle(''));
+  assert.ok(!S.isWeakTitle('IosuaTCG - Se filtra FLOWING FIST ENTERO'));
+  assert.ok(!S.isWeakTitle('Sunset 2024 timelapse'));
+});
+
+test('page titles: no site name or counter, nothing for a section', () => {
+  assert.equal(S.cleanPageTitle('Inicio / X'), '');
+  assert.equal(S.cleanPageTitle('(3) Home / X'), '');
+  assert.equal(S.cleanPageTitle('Pepe en X: "Mirad esto" / X'), 'Pepe en X: "Mirad esto"');
+  assert.equal(S.cleanPageTitle('Mi vídeo de prueba - YouTube'), 'Mi vídeo de prueba');
+  assert.equal(S.cleanPageTitle('Canal - Un título largo que no es el nombre de ningún sitio web'),
+    'Canal - Un título largo que no es el nombre de ningún sitio web');
+});
+
+test('download title: yt-dlp first, then the clicked element, then the page', () => {
+  const cdn = 'https://cdn.example/content/u/compressed_watermark_1_u_2.mp4';
+  assert.equal(S.pickTitle({ title: 'Un buen título', url: 'https://x.com/a/status/1', kind: 'page', clicked: 'otro', pageTitle: 'P q / S' }), 'Un buen título');
+  assert.equal(S.pickTitle({ title: 'compressed_watermark_1_u_2', url: cdn, kind: 'video', pageTitle: 'Lunes de playa - Galería' }), 'Lunes de playa');
+  assert.equal(S.pickTitle({ title: 'soVjrobcG123', url: 'https://video.twimg.com/a/pl/soVjrobcG123.m3u8', kind: 'stream', clicked: 'Texto del tuit', pageTitle: 'Inicio / X' }), 'Texto del tuit');
+  assert.equal(S.pickTitle({ title: 'Bueno pero stream', url: 'https://cdn/x.m3u8', kind: 'stream', pageTitle: 'Inicio / X' }), 'Bueno pero stream');
+  assert.equal(S.pickTitle({ title: 'abc123456', url: cdn, kind: 'player', clicked: 'Play', pageTitle: '' }), 'abc123456');
+});
