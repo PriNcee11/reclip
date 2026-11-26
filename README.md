@@ -39,6 +39,11 @@ Imagen: `ghcr.io/princee11/reclip:latest` (amd64, la publica CI en cada push a `
   firmado, que caduca en unas horas, y marca el vídeo como «solo vídeo» para que se
   junte con su pista de audio aparte. La API no está tras Cloudflare aunque la
   página que incrusta el reproductor sí lo esté.
+- **thothd.com (plugin de yt-dlp, desde 2026-11-26).** Reproductor KVS 7.8.5 cuyas
+  variables no se llaman `flashvars`, así que el extractor genérico fallaba con
+  «Unable to extract flashvars». `thothd.py` lee `video_url` (480p) y `video_alt_url`
+  (720p) de la página, que van en claro, y los ofrece como formatos mp4 con Referer.
+  Otros sitios KVS con la misma forma: añadirlos a `_DOMAINS`.
 - **Marcador «Send to ReClip».** En la página de ReClip hay un enlace para
   arrastrar a la barra de marcadores. En cualquier web recoge los reproductores
   incrustados (iframes de al menos 200×150, ignora banners y los `javascript:`) y
